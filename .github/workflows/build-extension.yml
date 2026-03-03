@@ -107,27 +107,6 @@ jobs:
           echo "PUBLISH=$PUBLISH" >> "$GITHUB_OUTPUT"
           echo "CHART_VERSION=$CHART_VERSION" >> "$GITHUB_OUTPUT"
           echo "NOTES_START_TAG=$NOTES_START_TAG" >> "$GITHUB_OUTPUT"
-          
-  # prepare:
-  #   runs-on: ubuntu-latest
-  #   outputs:
-  #     release_tag: ${{ steps.tags.outputs.TAGS }}
-  #   steps:
-  #     - name: Calculate tags
-  #       id: tags 
-  #       shell: bash
-  #       run: |
-  #         echo "TAGS<<##" >> "$GITHUB_OUTPUT"
-  #         ref=${{ github.ref }}
-  #         case "$ref" in
-  #           refs/heads/main)
-  #             echo "latest" >> "$GITHUB_OUTPUT";;
-  #           refs/tags/*)
-  #             echo "${ref#refs/tags/}" >> "$GITHUB_OUTPUT";;
-  #           *)
-  #             echo "${{ github.sha }}" >> "$GITHUB_OUTPUT";;
-  #         esac
-  #         echo "##" >> "$GITHUB_OUTPUT"
 
   build:
     strategy:
