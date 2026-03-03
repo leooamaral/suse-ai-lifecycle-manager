@@ -187,27 +187,22 @@ jobs:
           yarn --cwd pkg/suse-ai-lifecycle-manager version --new-version "${{ needs.prepare.outputs.VERSION }}" --no-git-tag-version
 
       - name: Parse Extension Name
-        id: parsed-name
         env:
           GH_TOKEN: ${{ github.token }}
-        run: |
-          NAME=$(jq -r '.name' pkg/suse-ai-lifecycle-manager/package.json)
-          VERSION=$(jq -r '.version' pkg/suse-ai-lifecycle-manager/package.json)
-          TAG="${NAME}-${VERSION}"
-          
+          TAG: "suse-ai-lifecycle-manager-${{ needs.prepare.outputs.VERSION }}"
+        run: |          
           yarn parse-tag-name $TAG ${{ github.run_id }} "catalog"
 
       - name: Build image
+        env:
+          TAG: "suse-ai-lifecycle-manager-${{ needs.prepare.outputs.VERSION }}"
         run: |
-          NAME=$(jq -r '.name' pkg/suse-ai-lifecycle-manager/package.json)
-          VERSION=$(jq -r '.version' pkg/suse-ai-lifecycle-manager/package.json)
-          TAG="${NAME}-${VERSION}"
-          
           yarn publish-pkgs -c -i '' -r ghcr.io -o 'leooamaral' -t "$TAG"
 
       - name: Tag and Push Image
+        env:
+          VERSION: ${{ needs.prepare.outputs.VERSION }}
         run: |
-          VERSION=${RELEASE_TAG##*-}
           docker tag $IMAGE_NAME:$VERSION $IMAGE_NAME:$VERSION-${{ matrix.arch }}
           docker push $IMAGE_NAME:$VERSION-${{ matrix.arch }}
 
@@ -232,9 +227,9 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Create multi-arch manifest
+        env:
+          VERSION: "suse-ai-lifecycle-manager-${{ needs.prepare.outputs.VERSION }}"
         run: |
-          VERSION=${RELEASE_TAG##*-}
-
           while IFS= read -r tag; do
             echo "Creating manifest for tag: $tag"
           
