@@ -245,7 +245,7 @@ jobs:
         run: |
           yq -i '
             .annotations."helm.sh/images" =
-            "- image: ghcr.io/suse/suse-ai-operator:${{ needs.prepare.outputs.VERSION }}\n  name: suse-ai-operator"
+            "- image: ghcr.io/suse/suse-ai-lifecycle-manager:${{ needs.prepare.outputs.VERSION }}\n  name: suse-ai-lifecycle-manager"
           ' $CHART_PATH/Chart.yaml
 
       - name: Package Helm Chart
@@ -265,7 +265,7 @@ jobs:
           git config user.name "github-actions"
           git config user.email "github-actions@github.com"
 
-          TAG="suse-ai-operator-${{ needs.prepare.outputs.VERSION }}"
+          TAG="suse-ai-lifecycle-manager-${{ needs.prepare.outputs.VERSION }}"
           git checkout -b release/${TAG}
 
           git add $CHART_PATH/Chart.yaml
@@ -280,7 +280,7 @@ jobs:
           START_TAG: ${{ needs.prepare.outputs.NOTES_START_TAG }}
         if: needs.prepare.outputs.PUBLISH == 'true' && github.ref == 'refs/heads/main'
         run: |
-          TAG="suse-ai-operator-${{ needs.prepare.outputs.VERSION }}"
+          TAG="suse-ai-lifecycle-manager-${{ needs.prepare.outputs.VERSION }}"
 
           NOTES_ARG=""
           if [[ -n "$START_TAG" ]]; then
