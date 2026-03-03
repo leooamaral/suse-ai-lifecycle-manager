@@ -181,15 +181,14 @@ jobs:
         id: parsed-name
         env:
           GH_TOKEN: ${{ github.token }}
-          VERSION_TAG: $(jq -r '.version' pkg/suse-ai-lifecycle-manager/package.json)
         run: |
-          yarn parse-tag-name ${{ env.VERSION_TAG }} ${{ github.run_id }} "catalog"
+          TAG=$(jq -r '.version' pkg/suse-ai-lifecycle-manager/package.json)
+          yarn parse-tag-name $TAG ${{ github.run_id }} "catalog"
 
       - name: Build image
-        env:
-          VERSION_TAG: $(jq -r '.version' pkg/suse-ai-lifecycle-manager/package.json)
         run: |
-          yarn publish-pkgs -c -i '' -r ghcr.io -o 'leooamaral' -t "${{ env.VERSION_TAG }}"
+          TAG=$(jq -r '.version' pkg/suse-ai-lifecycle-manager/package.json)
+          yarn publish-pkgs -c -i '' -r ghcr.io -o 'leooamaral' -t "$TAG"
 
       - name: Tag and Push Image
         run: |
