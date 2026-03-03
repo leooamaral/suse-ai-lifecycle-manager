@@ -228,7 +228,7 @@ jobs:
 
       - name: Create multi-arch manifest
         env:
-          VERSION: "suse-ai-lifecycle-manager-${{ needs.prepare.outputs.VERSION }}"
+          VERSION: "${{ needs.prepare.outputs.VERSION }}"
         run: |
           while IFS= read -r tag; do
             echo "Creating manifest for tag: $tag"
