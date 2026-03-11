@@ -1,28 +1,21 @@
 replicaCount: 1
-
 global:
   imageRegistry: ""
   imagePullSecrets: []
-
 image:
   registry: ghcr.io
   repository: suse/suse-ai-lifecycle-manager
-  tag: "1.0.0"
+  tag: "1.1.0-dev.4"
   pullPolicy: IfNotPresent
-
 imagePullSecrets: []
 nameOverride: ""
 fullnameOverride: ""
-
 service:
   type: ClusterIP
   port: 8080
-
 podAnnotations: {}
 podLabels: {}
-
 resources: {}
-
 probes:
   liveness:
     enabled: true
@@ -36,11 +29,9 @@ probes:
       path: /
       port: 8080
     periodSeconds: 10
-
 nodeSelector: {}
 tolerations: []
 affinity: {}
-
 rollingUpdate:
   maxSurge: 25%
   maxUnavailable: 25%
