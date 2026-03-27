@@ -13,13 +13,13 @@ entries:
       catalog.cattle.io/ui-extensions-version: '>= 3.0.0 < 4.0.0'
     apiVersion: v2
     appVersion: 1.2.0
-    created: "2026-03-27T14:49:02.602163249Z"
+    created: "2026-03-27T15:25:00.984116424Z"
     description: SUSE AI Lifecycle Manager
-    digest: 9cbef26a9193ea9e987b3bbde1d9c32cb95dd161855356e68761e5b22e2b5fd1
+    digest: 11d8b7f34d9612507354882bbc714cafd86b3bcad5fc39182bb562f60e625d35
     icon: https://raw.githubusercontent.com/SUSE/suse-ai-lifecycle-manager/refs/heads/main/pkg/suse-ai-lifecycle-manager/assets/logo.svg
     name: suse-ai-lifecycle-manager
     type: application
     urls:
     - assets/suse-ai-lifecycle-manager/suse-ai-lifecycle-manager-1.2.0.tgz
     version: 1.2.0
-generated: "2026-03-27T14:49:02.601816482Z"
+generated: "2026-03-27T15:25:00.983747966Z"
