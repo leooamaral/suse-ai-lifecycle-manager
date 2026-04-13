@@ -32,6 +32,16 @@ spec:
           {{- range .Values.manager.args }}
             - {{ . }}
           {{- end }}
+          {{- if .Values.webhook.enable }}
+            - --webhook-cert-path=/tmp/k8s-webhook-server/serving-certs
+          {{- end }}
+
+          ports:
+          {{- if .Values.webhook.enable }}
+            - containerPort: {{ .Values.webhook.port }}
+              name: webhook-server
+              protocol: TCP
+          {{- end }}
           
           {{- if .Values.manager.probes.liveness.enabled }}
           livenessProbe:
@@ -56,11 +66,22 @@ spec:
           volumeMounts:
             - mountPath: /home/nonroot/.cache
               name: helm-cache
+            {{- if .Values.webhook.enable }}
+            - mountPath: /tmp/k8s-webhook-server/serving-certs
+              name: webhook-cert
+              readOnly: true
+            {{- end }}
       serviceAccountName: {{ include "suse-ai-operator.fullname" . }}
       terminationGracePeriodSeconds: 30
       volumes:
         - emptyDir: {}
           name: helm-cache
+        {{- if .Values.webhook.enable }}
+        - name: webhook-cert
+          secret:
+            secretName: {{ include "suse-ai-operator.fullname" . }}-webhook-server-cert
+            defaultMode: 420
+        {{- end }}
       securityContext:
         {{- if .Values.manager.podSecurityContext }}
         {{- toYaml .Values.manager.podSecurityContext | nindent 14 }}

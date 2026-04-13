@@ -1,0 +1,16 @@
+{{- if .Values.webhook.enable }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "suse-ai-operator.serviceName" (dict "context" . "suffix" "webhook-service") }}
+  namespace: {{ include "suse-ai-operator.namespaceName" . }}
+  labels:
+    {{- include "suse-ai-operator.labels" . | nindent 4 }}
+spec:
+  ports:
+    - port: 443
+      targetPort: {{ .Values.webhook.port }}
+      protocol: TCP
+  selector:
+    {{- include "suse-ai-operator.selectorLabels" . | nindent 4 }}
+{{- end }}

@@ -5,9 +5,10 @@ import (
 
 	"github.com/SUSE/suse-ai-operator/internal/infra/rancher"
 	"github.com/SUSE/suse-ai-operator/internal/logging"
+	"helm.sh/helm/v3/pkg/cli"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	aiplatformv1alpha1 "github.com/SUSE/suse-ai-operator/api/v1alpha1"
+	aiplatformv1beta1 "github.com/SUSE/suse-ai-operator/api/v1beta1"
 	helmClient "github.com/SUSE/suse-ai-operator/internal/infra/helm"
 )
 
@@ -15,7 +16,7 @@ const finalizerName = "ai-platform.suse.com/finalizer"
 
 func (r *InstallAIExtensionReconciler) ensureFinalizer(
 	ctx context.Context,
-	ext *aiplatformv1alpha1.InstallAIExtension,
+	ext *aiplatformv1beta1.InstallAIExtension,
 ) (bool, error) {
 
 	log := logging.FromContext(ctx, "finalizer")
@@ -36,10 +37,8 @@ func (r *InstallAIExtensionReconciler) ensureFinalizer(
 
 func (r *InstallAIExtensionReconciler) handleDeletion(
 	ctx context.Context,
-	ext *aiplatformv1alpha1.InstallAIExtension,
-	helm helmClient.HelmClient,
+	ext *aiplatformv1beta1.InstallAIExtension,
 	rancherMgr *rancher.Manager,
-	releaseName string,
 	namespace string,
 ) error {
 
@@ -51,11 +50,31 @@ func (r *InstallAIExtensionReconciler) handleDeletion(
 
 	log.Info("Handling resource deletion")
 
-	if err := helm.DeleteRelease(ctx, releaseName); err != nil {
-		log.Error(err, "Failed to delete Helm release")
-		return err
+	// Determine helm release name from current spec or annotations (for source-switch case)
+	helmReleaseName := ""
+	if ext.Spec.Source.Helm != nil {
+		helmReleaseName = ext.Spec.Source.Helm.Name
+	} else if ext.Annotations != nil && ext.Annotations[annotationLastSourceType] == "helm" {
+		helmReleaseName = ext.Annotations[annotationLastHelmRelease]
 	}
 
+	if helmReleaseName != "" {
+		settings := cli.New()
+		settings.SetNamespace(namespace)
+
+		helm, err := helmClient.New(settings)
+		if err != nil {
+			log.Error(err, "Failed to create Helm client")
+			return err
+		}
+
+		if err := helm.DeleteRelease(ctx, helmReleaseName); err != nil {
+			log.Error(err, "Failed to delete Helm release", "release", helmReleaseName)
+			return err
+		}
+	}
+
+	// Cleanup Rancher resources (always, for both source types)
 	if err := rancherMgr.Cleanup(ctx, ext, namespace); err != nil {
 		log.Error(err, "Failed to cleanup Rancher resources")
 		return err
@@ -66,7 +85,7 @@ func (r *InstallAIExtensionReconciler) handleDeletion(
 
 func (r *InstallAIExtensionReconciler) removeFinalizer(
 	ctx context.Context,
-	ext *aiplatformv1alpha1.InstallAIExtension,
+	ext *aiplatformv1beta1.InstallAIExtension,
 ) error {
 
 	log := logging.FromContext(ctx, "finalizer")

@@ -3,7 +3,7 @@ package rancher
 import (
 	"context"
 
-	"github.com/SUSE/suse-ai-operator/api/v1alpha1"
+	"github.com/SUSE/suse-ai-operator/api/v1beta1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -28,7 +28,7 @@ func NewManager(c client.Client, s *runtime.Scheme) *Manager {
 
 func (m *Manager) Ensure(
 	ctx context.Context,
-	ext *v1alpha1.InstallAIExtension,
+	ext *v1beta1.InstallAIExtension,
 	svcURL string,
 	namespace string,
 ) error {
