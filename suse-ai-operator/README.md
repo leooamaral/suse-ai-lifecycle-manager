@@ -4,8 +4,10 @@ The SUSE AI Extension Operator installs and manages Rancher UI extension for SUS
 ## Purpose
 This operator exists to:
 - Install SUSE AI Rancher UI extensions safely and declaratively.
+- Support both Helm charts and Git repositories as extension sources.
 - Prevent conflicts with operator-unmanaged Helm resources.
 - Manage Helm releases, ClusterRepos, and UIPlugins.
+- Detect source type changes and clean up stale resources automatically.
 
 ## Getting Started
 
@@ -16,6 +18,7 @@ This operator exists to:
 - Access to a Kubernetes v1.11.3+ cluster
 - Helm 3.x
 - Rancher installed (for UIPlugin and ClusterRepo integration)
+- cert-manager installed (for conversion webhook TLS certificates)
 
 The following CRDs must exist before adding the operator:
   - `uiplugins.catalog.cattle.io`
@@ -38,27 +41,53 @@ helm install suse-ai-operator \
   oci://ghcr.io/suse/chart/suse-ai-operator
 ```
 
+The operator deploys a conversion webhook for API version compatibility (v1alpha1 <-> v1beta1). This requires cert-manager to be installed in the cluster for automatic TLS certificate management. To disable the webhook (single-version mode), set `--set webhook.enable=false`.
+
 This will deploy the SUSE AI Operator into the `suse-ai-operator-system` namespace.
 
 2. **Create the InstallAIExtension CR.** Once the operator is installed, apply the InstallAIExtension Custom Resource (CR) to install the required extension. Below is an example of the `extension.yaml`:
+**Using a Helm source:**
 ```yaml
-apiVersion: ai-platform.suse.com/v1alpha1
+apiVersion: ai-platform.suse.com/v1beta1
 kind: InstallAIExtension
 metadata:
   name: suseai
 spec:
-  helm:
-    name: suse-ai-lifecycle-manager
-    url: "oci://ghcr.io/suse/chart/suse-ai-lifecycle-manager"
-    version: "1.0.0"
+  source:
+    helm:
+      name: suse-ai-lifecycle-manager
+      url: "oci://ghcr.io/suse/chart/suse-ai-lifecycle-manager"
+      version: "1.0.0"
   extension:
     name: suse-ai-lifecycle-manager
     version: "1.0.0"
 ```
+
+**Or Using a Git source:**
+```yaml
+apiVersion: ai-platform.suse.com/v1beta1
+kind: InstallAIExtension
+metadata:
+  name: suseai
+spec:
+  source:
+    git:
+      repo: https://github.com/SUSE/suse-ai-lifecycle-manager
+      branch: gh-pages
+  extension:
+    name: suse-ai-lifecycle-manager
+    version: "1.0.0"
+```
+
 Apply this file
 ```sh
 kubectl apply -f extension.yaml
 ```
+
+> **NOTE:** The v1alpha1 API version with `spec.helm` is still supported but deprecated. Use `spec.source.helm` or `spec.source.git` in v1beta1 instead.
+
+> **NOTE:** Each `spec.extension.name` must be unique across all InstallAIExtension resources. The operator will reject duplicates with a `Failed` status.
+
 
 ### Uninstall
 
@@ -74,7 +103,7 @@ helm uninstall suse-ai-operator -n suse-ai-operator-system
 
 3. **Delete the CRDs.** After uninstalling the operator, you remove the associated Custom Resource Definitions (CRDs). To delete the InstallAIExtension CRD, use:
 ```sh
-kubectl delete crd installaiextension.ai-platform.suse.com
+kubectl delete crd installaiextensions.ai-platform.suse.com
 ```
 
 ## Development
@@ -128,7 +157,7 @@ helm uninstall suse-ai-operator -n suse-ai-operator-system
 **Delete the APIs(CRDs) from the cluster:**
 
 ```sh
-kubectl delete crd installaiextension.ai-platform.suse.com
+kubectl delete crd installaiextensions.ai-platform.suse.com
 ```
 
 ## Testing
@@ -138,12 +167,13 @@ kubectl delete crd installaiextension.ai-platform.suse.com
 2. **Install the operator:**
 
 ```bash
-helm install suse-ai-operator ./charts/suse-ai-operator -n suse-ai-operator-system
+helm install suse-ai-operator ./charts/suse-ai-operator -n suse-ai-operator-system \
+    --create-namespace
 ```
 
 3. **Apply an extension:**
 ```bash
-kubectl apply -f config/samples/installaiextension.yaml
+kubectl apply -f samples/installaiextension.yaml
 ```
 
 4. **Observe reconciliation:**
@@ -153,7 +183,7 @@ kubectl logs -l app.kubernetes.io/name=suse-ai-operator -f -n suse-ai-operator-s
 
 5. **Verify resources:**
 ```bash
-kubectl get installaiextensions
+kubectl get iae
 kubectl get uiplugins -A
 kubectl get clusterrepos
 helm list -A

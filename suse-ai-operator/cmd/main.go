@@ -37,7 +37,12 @@ import (
 
 	aiplatformv1alpha1 "github.com/SUSE/suse-ai-operator/api/v1alpha1"
 	"github.com/SUSE/suse-ai-operator/internal/config"
+
 	aiextensionctrl "github.com/SUSE/suse-ai-operator/internal/controller/installaiextension"
+
+	aiplatformv1beta1 "github.com/SUSE/suse-ai-operator/api/v1beta1"
+
+	conversionwebhook "sigs.k8s.io/controller-runtime/pkg/webhook/conversion"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -50,6 +55,7 @@ func init() {
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
 
 	utilruntime.Must(aiplatformv1alpha1.AddToScheme(scheme))
+	utilruntime.Must(aiplatformv1beta1.AddToScheme(scheme))
 	// +kubebuilder:scaffold:scheme
 }
 
@@ -189,6 +195,9 @@ func main() {
 		setupLog.Error(err, "unable to create controller", "controller", "InstallAIExtension")
 		os.Exit(1)
 	}
+
+	mgr.GetWebhookServer().Register("/convert", conversionwebhook.NewWebhookHandler(mgr.GetScheme()))
+
 	// +kubebuilder:scaffold:builder
 
 	if err := mgr.AddHealthzCheck("healthz", healthz.Ping); err != nil {

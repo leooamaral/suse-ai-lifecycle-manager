@@ -69,3 +69,11 @@ rbacHelpers:
 metrics:
   enable: true
   port: 8443
+
+webhook:
+  enable: true
+  port: 9443
+  certManager:
+    enable: true
+    # issuerRef: {}  # Optional: use a specific ClusterIssuer
+
