@@ -1,0 +1,20 @@
+{{- if .Values.extension.enable }}
+apiVersion: ai-platform.suse.com/v1beta1
+kind: InstallAIExtension
+metadata:
+  name: {{ .Values.extension.crName | default "suseai" }}
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "10"
+    "helm.sh/hook-delete-policy": before-hook-creation
+    "helm.sh/resource-policy": keep
+spec:
+  source:
+    helm:
+      name: suse-ai-lifecycle-manager
+      url: "oci://ghcr.io/suse/chart/suse-ai-lifecycle-manager"
+      version: {{ .Values.extension.chartVersion | quote }}
+  extension:
+    name: suse-ai-lifecycle-manager
+    version: {{ .Values.extension.version | quote }}
+{{- end }}
