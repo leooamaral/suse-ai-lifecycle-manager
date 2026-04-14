@@ -395,9 +395,10 @@ async function refreshVersions() {
     if (form.value.chartVersion) {
       await ensureVersionInfoLoaded();
 
-      // Load default values for install mode
+      // Load default values for install mode, then resolve pull secret names
       if (isInstallMode.value) {
         await loadDefaultValues({ skipVersionInfoFetch: true });
+        await resolvePullSecretNames();
       }
     }
   } finally {
@@ -450,6 +451,88 @@ async function loadDefaultValues(options: { skipVersionInfoFetch?: boolean } = {
     error.value = e?.message || 'Failed to fetch default values.';
   } finally {
     loadingValues.value = false;
+  }
+}
+
+/**
+ * Resolve pull secret names from repo credentials and subchart dependencies,
+ * then inject them into form.values so the user can see them in the Configuration step.
+ */
+async function resolvePullSecretNames() {
+  if (!store || !form.value.chartRepo || !form.value.chartName || !form.value.chartVersion) {
+    return;
+  }
+
+  const allPullSecrets = new Set<string>();
+
+  try {
+    // Resolve credentials from the selected ClusterRepo
+    const repoCtx = await getRepoAuthForClusterRepo(store, form.value.chartRepo);
+    const hasRepoCredentials = !!repoCtx.auth?.username && !!repoCtx.auth?.password;
+
+    if (hasRepoCredentials) {
+      const desiredSecretBase = repoCtx.secretName || `repo-${form.value.chartRepo}`;
+      const secretName = `suse-ai-pull-secret-${desiredSecretBase.replace(/[^a-z0-9-]/g, '-')}`;
+      allPullSecrets.add(secretName);
+    }
+
+    // Check subchart dependencies for additional pull secrets
+    const chartYaml = await fetchChartYaml(store, form.value.chartRepo, form.value.chartName, form.value.chartVersion);
+    if (chartYaml?.dependencies) {
+      let clusterRepos: any[] = [];
+      try {
+        clusterRepos = await listClusterRepos(store);
+      } catch (e: any) {
+        console.warn('[SUSE-AI] Failed to list cluster repos for dependency secrets:', e?.message || e);
+      }
+
+      const repos = clusterRepos
+        .filter((r: any) => r?.metadata?.name && (r?.spec?.url || r?.spec?.gitRepo || r?.spec?.ociRepo))
+        .map((r: any) => ({
+          name: r.metadata.name,
+          url: r.spec.url || r.spec.gitRepo || r.spec.ociRepo
+        }));
+      const processedRepos = new Set<string>();
+
+      for (const dep of chartYaml.dependencies) {
+        if (!dep.repository) continue;
+
+        const normalizeUrl = (url: string) => url?.replace(/\/+$/, '').toLowerCase();
+        const repo = repos.find((r: any) => normalizeUrl(r.url) === normalizeUrl(dep.repository));
+
+        if (!repo || processedRepos.has(repo.name)) continue;
+        processedRepos.add(repo.name);
+
+        const subRepoCtx = await getRepoAuthForClusterRepo(store, repo.name);
+        if (!subRepoCtx.auth?.username || !subRepoCtx.auth?.password) continue;
+
+        const subDesiredSecretBase = subRepoCtx.secretName || `repo-${repo.name}`;
+        const secretName = `suse-ai-pull-secret-${subDesiredSecretBase.replace(/[^a-z0-9-]/g, '-')}`;
+        allPullSecrets.add(secretName);
+      }
+    }
+
+    // Inject resolved secret names into form values
+    if (allPullSecrets.size > 0) {
+      const pullSecrets = Array.from(allPullSecrets);
+      const addSecrets = (arr: any): any[] => {
+        const list = Array.isArray(arr) ? arr.slice() : [];
+        for (const secretName of pullSecrets) {
+          const hasStr = list.some((e: any) => e === secretName);
+          const hasObj = list.some((e: any) => e && typeof e === 'object' && e.name === secretName);
+          if (!hasStr && !hasObj) {
+            list.push({ name: secretName });
+          }
+        }
+        return list;
+      };
+
+      form.value.values.global = form.value.values.global || {};
+      form.value.values.global.imagePullSecrets = addSecrets(form.value.values.global?.imagePullSecrets);
+      form.value.values.imagePullSecrets = addSecrets(form.value.values.imagePullSecrets);
+    }
+  } catch (e: any) {
+    console.warn('[SUSE-AI] Failed to resolve pull secret names (will retry at install time):', e?.message || e);
   }
 }
 
@@ -515,6 +598,7 @@ async function onVersionChange() {
 
   if (isInstallMode.value) {
     await loadDefaultValues({ skipVersionInfoFetch: true });
+    await resolvePullSecretNames();
   }
 
   // Persist form state
@@ -580,8 +664,6 @@ async function submit() {
       await performMultiClusterInstall();
     } else {
       await performUpgrade();
-      // For upgrade, redirect immediately
-      navigateToAppInstances();
     }
   } catch (e: any) {
     error.value = e?.message || 'Operation failed';
@@ -732,9 +814,14 @@ async function onProgressModalRetryAll() {
 
   submitting.value = true;
 
-  // Re-run installation with parallelization
   const clusterIds = installProgress.value.map(p => p.clusterId);
-  await installWithConcurrencyLimit(clusterIds, INSTALL_CONCURRENCY);
+
+  if (isManageMode.value) {
+    await upgradeSingleCluster(clusterIds[0]);
+  } else {
+    // Re-run installation with parallelization
+    await installWithConcurrencyLimit(clusterIds, INSTALL_CONCURRENCY);
+  }
 
   submitting.value = false;
 }
@@ -754,9 +841,14 @@ async function onProgressModalRetryFailed() {
 
   submitting.value = true;
 
-  // Retry failed clusters with parallelization
   const failedIds = failedClusters.map(p => p.clusterId);
-  await installWithConcurrencyLimit(failedIds, INSTALL_CONCURRENCY);
+
+  if (isManageMode.value) {
+    await upgradeSingleCluster(failedIds[0]);
+  } else {
+    // Re-run installation with parallelization
+    await installWithConcurrencyLimit(failedIds, INSTALL_CONCURRENCY);
+  }
 
   submitting.value = false;
 }
@@ -857,26 +949,12 @@ async function installToCluster(
 
   onProgress(45, 'Configuring image pull secrets...');
 
+  // Pull secret names are already in form.value.values (populated by resolvePullSecretNames).
+  // Here we only need to attach them to service accounts.
   const v = JSON.parse(JSON.stringify(form.value.values || {}));
   const pullSecrets = Array.from(allPullSecrets);
 
-  // Only add imagePullSecrets if we have a secret name (i.e., repo has authentication)
   if (pullSecrets.length > 0) {
-    const addSecrets = (arr: any): any[] => {
-      const list = Array.isArray(arr) ? arr.slice() : [];
-      for (const secretName of pullSecrets) {
-        const hasStr = list.some((e: any) => e === secretName);
-        const hasObj = list.some((e: any) => e && typeof e === 'object' && e.name === secretName);
-        if (!hasStr && !hasObj) {
-          list.push({ name: secretName });
-        }
-      }
-      return list;
-    };
-    v.global = v.global || {};
-    v.global.imagePullSecrets = addSecrets(v.global.imagePullSecrets);
-    v.imagePullSecrets = addSecrets(v.imagePullSecrets);
-
     const saCandidates = new Set<string>(['default']);
     const vs = (v as any).serviceAccount || {};
     if (typeof vs?.name === 'string' && vs.name.trim()) saCandidates.add(vs.name.trim());
@@ -901,7 +979,7 @@ async function installToCluster(
     values: v
   });
 
-  await createOrUpgradeApp(
+  const { upgraded } = await createOrUpgradeApp(
     store, clusterId, form.value.namespace, form.value.release,
     { repoName: form.value.chartRepo, chartName: form.value.chartName, version: form.value.chartVersion },
     v,
@@ -911,7 +989,7 @@ async function installToCluster(
   onProgress(75, 'Waiting for app deployment...');
 
   try {
-    await waitForAppInstall(store, clusterId, form.value.namespace, form.value.release, 180_000);
+    await waitForAppInstall(store, clusterId, form.value.namespace, form.value.release, 180_000, upgraded);
   } catch (e: any) {
     console.error('[SUSE-AI] post-install app status (peek): ', { error: e?.message || e });
     throw new Error(`App resource did not appear in namespace ${form.value.namespace}. Check Rancher logs and ClusterRepo permissions.`);
@@ -937,15 +1015,91 @@ async function installToCluster(
 }
 
 async function performUpgrade() {
-  for (const cid of form.value.clusters) {
-    await ensureNamespace(store, cid, form.value.namespace);
-    await createOrUpgradeApp(
-      store, cid, form.value.namespace, form.value.release,
-      { repoName: form.value.chartRepo, chartName: form.value.chartName, version: form.value.chartVersion },
-      form.value.values,
-      'upgrade'
-    );
+  const clusterId = form.value.clusters[0];
+
+  // Initialize progress for the single cluster
+  installProgress.value = [{
+    clusterId,
+    clusterName: await getClusterDisplayName(clusterId),
+    status: 'pending' as const,
+    progress: 0,
+    message: 'Waiting to start...'
+  }];
+
+  showProgressModal.value = true;
+
+  await upgradeSingleCluster(clusterId);
+
+  submitting.value = false;
+}
+
+// Upgrade a single cluster and update progress
+async function upgradeSingleCluster(clusterId: string): Promise<void> {
+  updateClusterProgress(clusterId, {
+    status: 'installing',
+    progress: 10,
+    message: 'Starting upgrade...'
+  });
+
+  try {
+    await upgradeToCluster(clusterId, (progress, message) => {
+      updateClusterProgress(clusterId, { progress, message });
+    });
+
+    updateClusterProgress(clusterId, {
+      status: 'success',
+      progress: 100,
+      message: 'Upgrade completed successfully'
+    });
+  } catch (e: any) {
+    updateClusterProgress(clusterId, {
+      status: 'failed',
+      progress: 0,
+      message: 'Upgrade failed',
+      error: e?.message || 'Unknown error'
+    });
   }
+}
+
+// Upgrade a single cluster with progress callback
+async function upgradeToCluster(
+  clusterId: string,
+  onProgress: (progress: number, message: string) => void
+) {
+  onProgress(15, 'Preparing namespace...');
+  await ensureNamespace(store, clusterId, form.value.namespace);
+
+  onProgress(40, 'Upgrading Helm chart...');
+
+  const v = JSON.parse(JSON.stringify(form.value.values || {}));
+
+  console.log('[SUSE-AI] calling upgrade ', {
+    cluster: clusterId,
+    repo: form.value.chartRepo,
+    chart: form.value.chartName,
+    version: form.value.chartVersion,
+    ns: form.value.namespace,
+    release: form.value.release,
+    values: v
+  });
+
+  await createOrUpgradeApp(
+    store, clusterId, form.value.namespace, form.value.release,
+    { repoName: form.value.chartRepo, chartName: form.value.chartName, version: form.value.chartVersion },
+    v,
+    'upgrade'
+  );
+
+  onProgress(70, 'Waiting for app deployment...');
+
+  try {
+    await waitForAppInstall(store, clusterId, form.value.namespace, form.value.release, 180_000, true);
+  } catch (e: any) {
+    console.error('[SUSE-AI] post-upgrade app status (peek): ', { error: e?.message || e });
+    throw new Error(e?.message || `App upgrade failed in namespace ${form.value.namespace}`);
+  }
+
+  onProgress(100, 'Upgrade complete');
 }
 
 // Custom wizard navigation methods
@@ -1115,7 +1269,7 @@ function previousStep() {
     <InstallProgressModal
       :show="showProgressModal"
       :progress="installProgress"
-      :title="`Installing ${(route.query.n as string) || props.slug}`"
+      :title="`${isInstallMode ? 'Installing' : 'Upgrading'} ${(route.query.n as string) || props.slug}`"
       @done="onProgressModalDone"
       @cancel="onProgressModalCancel"
       @retry-all="onProgressModalRetryAll"

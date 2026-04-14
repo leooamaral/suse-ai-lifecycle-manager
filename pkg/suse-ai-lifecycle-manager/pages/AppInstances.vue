@@ -584,9 +584,13 @@ export default defineComponent({
                     break;
                   case 'installing':
                   case 'pending':
+                  case 'pending-install':
                     instanceStatus = 'installing';
                     break;
+                  case 'active':
                   case 'upgrading':
+                  case 'pending-upgrade':
+                  case 'pending-rollback':
                     instanceStatus = 'upgrading';
                     break;
                   case 'uninstalling':
