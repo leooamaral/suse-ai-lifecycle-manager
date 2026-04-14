@@ -70,6 +70,12 @@ metrics:
   enable: true
   port: 8443
 
+extension:
+  enable: true
+  crName: suseai
+  chartVersion: 1.0.0
+  version: 1.0.0
+
 webhook:
   enable: true
   port: 9443

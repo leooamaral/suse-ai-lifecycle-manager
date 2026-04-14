@@ -28,6 +28,9 @@ The following CRDs must exist before adding the operator:
 
 The operator is distributed as a Helm chart and installs:
 - Controller Deployment
+- Conversion Webhook (v1alpha1 <-> v1beta1)
+- Default InstallAIExtension CR (configurable, enabled by default)
+- Pre-delete cleanup Job (ensures clean uninstall)
 - RBAC
 - CRDs
 - Metrics Service
@@ -41,11 +44,15 @@ helm install suse-ai-operator \
   oci://ghcr.io/suse/chart/suse-ai-operator
 ```
 
-The operator deploys a conversion webhook for API version compatibility (v1alpha1 <-> v1beta1). This requires cert-manager to be installed in the cluster for automatic TLS certificate management. To disable the webhook (single-version mode), set `--set webhook.enable=false`.
-
 This will deploy the SUSE AI Operator into the `suse-ai-operator-system` namespace.
 
-2. **Create the InstallAIExtension CR.** Once the operator is installed, apply the InstallAIExtension Custom Resource (CR) to install the required extension. Below is an example of the `extension.yaml`:
+The operator deploys a conversion webhook for API version compatibility (v1alpha1 <-> v1beta1). This requires cert-manager to be installed in the cluster for automatic TLS certificate management. To disable the webhook (single-version mode), set `--set webhook.enable=false`.
+
+By default, the chart also creates an `InstallAIExtension` CR to install the SUSE AI Lifecycle Manager extension. To install the operator without the bundled extension, set --set `extension.enable=false`.
+
+2. **(Optional) Create the InstallAIExtension CR.** By default, the chart already creates an InstallAIExtension CR that installs the SUSE AI Lifecycle Manager extension. Skip this step if the default configuration is sufficient.
+
+If you need a custom configuration, or installed with `--set extension.enable=false`, create your own CR:
 **Using a Helm source:**
 ```yaml
 apiVersion: ai-platform.suse.com/v1beta1
@@ -91,17 +98,20 @@ kubectl apply -f extension.yaml
 
 ### Uninstall
 
-1. **Remove the InstallAIExtension CR.** To remove the InstallAIExtension CR, use:
-```sh
-kubectl delete -f extension.yaml
-```
-
-2. **Uninstall the SUSE AI Operator.** To uninstall the operator, run the following command:
+To uninstall the operator:
 ```sh
 helm uninstall suse-ai-operator -n suse-ai-operator-system
 ```
 
-3. **Delete the CRDs.** After uninstalling the operator, you remove the associated Custom Resource Definitions (CRDs). To delete the InstallAIExtension CRD, use:
+When the bundled extension is enabled (`extension.enable=true`), a pre-delete cleanup Job automatically deletes the `InstallAIExtension` CR and waits for the operator to finish cleaning up Helm releases, ClusterRepos, and UIPlugins before the operator is removed.
+
+If you installed the extension manually (with `extension.enable=false`), delete the CR first:
+```sh
+kubectl delete iae suseai
+helm uninstall suse-ai-operator -n suse-ai-operator-system
+```
+
+After uninstalling, remove the CRD if desired:
 ```sh
 kubectl delete crd installaiextensions.ai-platform.suse.com
 ```
@@ -133,13 +143,15 @@ helm install suse-ai-operator ./charts/suse-ai-operator/ -n suse-ai-operator-sys
 privileges or be logged in as admin.
 
 **Create CRs**
-You can apply the samples (examples) from the config/sample:
+You can apply the sample (example) from the samples/:
+
+>**NOTE**: Don't apply all the samples, choose one.
 
 ```sh
 kubectl apply -k samples/
 ```
 
->**NOTE**: Ensure that the samples has default values to test it out.
+>**NOTE**: Ensure that the sample has default values to test it out. 
 
 ### To Uninstall
 **Delete the instances (CRs) from the cluster:**
