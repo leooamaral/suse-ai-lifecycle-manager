@@ -5,6 +5,7 @@ The SUSE AI Extension Operator installs and manages Rancher UI extension for SUS
 This operator exists to:
 - Install SUSE AI Rancher UI extensions safely and declaratively.
 - Support both Helm charts and Git repositories as extension sources.
+- Support managed and unmanaged version policies for git sources.
 - Prevent conflicts with operator-unmanaged Helm resources.
 - Manage Helm releases, ClusterRepos, and UIPlugins.
 - Detect source type changes and clean up stale resources automatically.
@@ -70,7 +71,7 @@ spec:
     version: "1.0.0"
 ```
 
-**Or Using a Git source:**
+**Or Using a Git source (managed, pinned version):**
 ```yaml
 apiVersion: ai-platform.suse.com/v1beta1
 kind: InstallAIExtension
@@ -86,6 +87,38 @@ spec:
     version: "1.0.0"
 ```
 
+**Or Using a Git source (managed, latest version):**
+```yaml
+apiVersion: ai-platform.suse.com/v1beta1
+kind: InstallAIExtension
+metadata:
+  name: suseai
+spec:
+  source:
+    git:
+      repo: https://github.com/SUSE/suse-ai-lifecycle-manager
+      branch: gh-pages
+  extension:
+    name: suse-ai-lifecycle-manager
+```
+
+**Or Using a Git source (unmanaged — user controls upgrades via Rancher UI):**
+```yaml
+apiVersion: ai-platform.suse.com/v1beta1
+kind: InstallAIExtension
+metadata:
+  name: suseai
+spec:
+  source:
+    git:
+      repo: https://github.com/SUSE/suse-ai-lifecycle-manager
+      branch: gh-pages
+  extension:
+    name: suse-ai-lifecycle-manager
+    version: "1.0.0"
+    versionPolicy: unmanaged
+```
+
 Apply this file
 ```sh
 kubectl apply -f extension.yaml
@@ -94,6 +127,12 @@ kubectl apply -f extension.yaml
 > **NOTE:** The v1alpha1 API version with `spec.helm` is still supported but deprecated. Use `spec.source.helm` or `spec.source.git` in v1beta1 instead.
 
 > **NOTE:** Each `spec.extension.name` must be unique across all InstallAIExtension resources. The operator will reject duplicates with a `Failed` status.
+
+> **NOTE:** The `versionPolicy` field controls how the operator manages the UIPlugin for git sources:
+> - `managed` (default): The operator fully controls the UIPlugin. If `version` is set, it pins to that version. If `version` is omitted, it automatically resolves and tracks the latest version. Users cannot modify or uninstall the extension from the Rancher UI.
+> - `unmanaged`: The operator installs the UIPlugin once, then hands off. Users can upgrade, downgrade, or uninstall the extension from Rancher's Extensions page.
+>
+> Helm sources always behave as managed with an explicit version — `versionPolicy` is not applicable.
 
 
 ### Uninstall

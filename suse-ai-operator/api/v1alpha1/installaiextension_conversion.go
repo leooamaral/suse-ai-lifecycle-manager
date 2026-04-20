@@ -53,6 +53,7 @@ func (src *InstallAIExtension) ConvertTo(dstRaw conversion.Hub) error {
 	// Status — same shape in both versions
 	dst.Status.Phase = src.Status.Phase
 	dst.Status.Message = src.Status.Message
+	dst.Status.ResolvedVersion = src.Status.ResolvedVersion
 
 	return nil
 }
@@ -107,6 +108,7 @@ func (dst *InstallAIExtension) ConvertFrom(srcRaw conversion.Hub) error {
 	// Status — same shape in both versions
 	dst.Status.Phase = src.Status.Phase
 	dst.Status.Message = src.Status.Message
+	dst.Status.ResolvedVersion = src.Status.ResolvedVersion
 
 	return nil
 }

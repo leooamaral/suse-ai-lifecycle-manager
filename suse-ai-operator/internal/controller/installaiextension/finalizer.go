@@ -50,26 +50,40 @@ func (r *InstallAIExtensionReconciler) handleDeletion(
 
 	log.Info("Handling resource deletion")
 
-	// Determine helm release name from current spec or annotations (for source-switch case)
-	helmReleaseName := ""
-	if ext.Spec.Source.Helm != nil {
-		helmReleaseName = ext.Spec.Source.Helm.Name
-	} else if ext.Annotations != nil && ext.Annotations[annotationLastSourceType] == "helm" {
-		helmReleaseName = ext.Annotations[annotationLastHelmRelease]
+	settings := cli.New()
+	settings.SetNamespace(namespace)
+
+	helm, err := helmClient.New(settings)
+	if err != nil {
+		log.Error(err, "Failed to create Helm client")
+		return err
 	}
 
-	if helmReleaseName != "" {
-		settings := cli.New()
-		settings.SetNamespace(namespace)
-
-		helm, err := helmClient.New(settings)
-		if err != nil {
-			log.Error(err, "Failed to create Helm client")
+	// Delete deployment helm release (helm source only)
+	deployRelease := ""
+	if ext.Spec.Source.Helm != nil {
+		deployRelease = deploymentReleaseName(ext)
+	} else if ext.Annotations != nil && ext.Annotations[annotationLastSourceType] == "helm" {
+		deployRelease = ext.Annotations[annotationLastHelmRelease]
+	}
+	if deployRelease != "" {
+		if err := helm.DeleteRelease(ctx, deployRelease); err != nil {
+			log.Error(err, "Failed to delete deployment release", "release", deployRelease)
 			return err
 		}
+	}
 
-		if err := helm.DeleteRelease(ctx, helmReleaseName); err != nil {
-			log.Error(err, "Failed to delete Helm release", "release", helmReleaseName)
+	lastPolicy := ""
+	if ext.Annotations != nil {
+		lastPolicy = ext.Annotations[annotationLastVersionPolicy]
+	}
+	if lastPolicy == "unmanaged" {
+		uiRelease := ext.Spec.Extension.Name
+		if ext.Annotations != nil && ext.Annotations[annotationLastUIPluginRelease] != "" {
+			uiRelease = ext.Annotations[annotationLastUIPluginRelease]
+		}
+		if err := helm.DeleteRelease(ctx, uiRelease); err != nil {
+			log.Error(err, "Failed to delete UIPlugin release", "release", uiRelease)
 			return err
 		}
 	}

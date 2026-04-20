@@ -3,7 +3,8 @@
 Helm chart to deploy the SUSE AI Operator on Kubernetes.
 
 The SUSE AI Operator manages the lifecycle of AI extensions in a Rancher-managed cluster using the `InstallAIExtension` custom resource.
-It supports both Helm charts and Git repositories as extension sources, and integrates with Rancher catalogs (ClusterRepo) and UI plugins (UIPlugin) to enable declarative installation and management.
+It supports both Helm charts and Git repositories as extension sources, and integrates with Rancher catalogs (ClusterRepo) and UI plugins (UIPlugin) to enable declarative installation and management. For git sources, the operator supports managed and unmanaged version policies to control whether the operator or the user manages extension upgrades.
+
 
 **Homepage:** <https://github.com/SUSE/suse-ai-lifecycle-manager/suse-ai-operator>
 

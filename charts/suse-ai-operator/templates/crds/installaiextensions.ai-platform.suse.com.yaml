@@ -155,6 +155,8 @@ spec:
                 type: string
               phase:
                 type: string
+              resolvedVersion:
+                type: string
             type: object
         required:
         - spec
@@ -199,11 +201,19 @@ spec:
                     minLength: 1
                     type: string
                   version:
-                    minLength: 1
+                    type: string
+                  versionPolicy:
+                    default: managed
+                    description: |-
+                      Version management policy (git sources only).
+                      "managed" uses the explicit version if set, or resolves latest if empty.
+                      "unmanaged" installs once via helm release, then user manages from Rancher UI.
+                    enum:
+                    - managed
+                    - unmanaged
                     type: string
                 required:
                 - name
-                - version
                 type: object
               source:
                 properties:
@@ -256,6 +266,8 @@ spec:
               message:
                 type: string
               phase:
+                type: string
+              resolvedVersion:
                 type: string
             type: object
         required:
