@@ -10,9 +10,10 @@ metadata:
     "helm.sh/resource-policy": keep
 spec:
   source:
-    git:
-      repo: https://github.com/SUSE/suse-ai-lifecycle-manager
-      branch: gh-pages
+    helm:
+      name: suse-ai-lifecycle-manager
+      url: "oci://ghcr.io/suse/chart/suse-ai-lifecycle-manager"
+      version: {{ .Values.extension.chartVersion | quote }}
   extension:
     name: suse-ai-lifecycle-manager
     version: {{ .Values.extension.version | quote }}

@@ -30,10 +30,7 @@ func (m *Manager) ensureUIPlugin(
 	ui.SetName(ext.Spec.Extension.Name)
 	ui.SetNamespace(namespace)
 
-	log.Info(
-		"Ensuring UIPlugin",
-		"namespace", namespace,
-	)
+	log.Info("Ensuring UIPlugin", "namespace", namespace)
 
 	_, err := ctrl.CreateOrUpdate(ctx, m.client, ui, func() error {
 		if err := unstructured.SetNestedField(ui.Object, ext.Spec.Extension.Name, "spec", "plugin", "name"); err != nil {
@@ -52,23 +49,9 @@ func (m *Manager) ensureUIPlugin(
 			return err
 		}
 
-		logging.Trace(log).Info(
-			"Configuring UIPlugin spec",
-			"endpoint", pluginEndpoint,
-		)
+		logging.Trace(log).Info("Configuring UIPlugin spec", "endpoint", pluginEndpoint)
 
-		metadata := ext.Spec.Extension.Metadata
-		if metadata == nil {
-			metadata = map[string]string{}
-		}
-
-		metadata, err = buildExtensionMetadata(
-			ctx,
-			m.indexCache,
-			svcURL,
-			ext,
-		)
-
+		metadata, err := buildExtensionMetadata(ctx, m.indexCache, svcURL, ext)
 		if err != nil {
 			return err
 		}
@@ -87,24 +70,16 @@ func buildPluginEndpoint(ext *v1beta1.InstallAIExtension, svcURL string) (string
 	switch {
 	case ext.Spec.Source.Helm != nil:
 		return fmt.Sprintf("%s/plugin/%s-%s", svcURL, ext.Spec.Extension.Name, ext.Spec.Extension.Version), nil
-
 	case ext.Spec.Source.Git != nil:
-		// Convert github.com/owner/repo or https://github.com/owner/repo
-		// to https://raw.githubusercontent.com/owner/repo/<branch>/extensions/<name>/<version>
 		repo := ext.Spec.Source.Git.Repo
 		repo = strings.TrimPrefix(repo, "https://")
 		repo = strings.TrimPrefix(repo, "http://")
 		repo = strings.TrimPrefix(repo, "github.com/")
 		repo = strings.TrimSuffix(repo, ".git")
-
 		return fmt.Sprintf(
 			"https://raw.githubusercontent.com/%s/%s/extensions/%s/%s",
-			repo,
-			ext.Spec.Source.Git.Branch,
-			ext.Spec.Extension.Name,
-			ext.Spec.Extension.Version,
+			repo, ext.Spec.Source.Git.Branch, ext.Spec.Extension.Name, ext.Spec.Extension.Version,
 		), nil
-
 	default:
 		return "", fmt.Errorf("source must specify either helm or git")
 	}

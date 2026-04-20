@@ -87,8 +87,9 @@ type ExtensionSpec struct {
 
 // InstallAIExtensionStatus defines the observed state of InstallAIExtension.
 type InstallAIExtensionStatus struct {
-	Phase   string `json:"phase,omitempty"`
-	Message string `json:"message,omitempty"`
+	Phase           string `json:"phase,omitempty"`
+	Message         string `json:"message,omitempty"`
+	ResolvedVersion string `json:"resolvedVersion,omitempty"`
 }
 
 // +kubebuilder:object:root=true

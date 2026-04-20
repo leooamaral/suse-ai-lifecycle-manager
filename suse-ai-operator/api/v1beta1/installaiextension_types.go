@@ -75,15 +75,25 @@ type ExtensionSpec struct {
 	// +kubebuilder:validation:MinLength=1
 	Name string `json:"name"`
 
-	// +kubebuilder:validation:MinLength=1
-	Version  string            `json:"version"`
+	// +optional
+	Version string `json:"version,omitempty"`
+
+	// Version management policy (git sources only).
+	// "managed" uses the explicit version if set, or resolves latest if empty.
+	// "unmanaged" installs once via helm release, then user manages from Rancher UI.
+	// +kubebuilder:validation:Enum=managed;unmanaged
+	// +kubebuilder:default=managed
+	// +optional
+	VersionPolicy string `json:"versionPolicy,omitempty"`
+
 	Metadata map[string]string `json:"metadata,omitempty"`
 }
 
 // InstallAIExtensionStatus defines the observed state of InstallAIExtension.
 type InstallAIExtensionStatus struct {
-	Phase   string `json:"phase,omitempty"`
-	Message string `json:"message,omitempty"`
+	Phase           string `json:"phase,omitempty"`
+	Message         string `json:"message,omitempty"`
+	ResolvedVersion string `json:"resolvedVersion,omitempty"`
 }
 
 // +kubebuilder:object:root=true

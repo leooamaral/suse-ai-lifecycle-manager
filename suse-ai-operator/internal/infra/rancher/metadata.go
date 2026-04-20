@@ -87,7 +87,7 @@ func indexURLsForSource(ext *v1beta1.InstallAIExtension, svcURL string) ([]strin
 		}, nil
 
 	case ext.Spec.Source.Git != nil:
-		base := gitRawBaseURL(ext.Spec.Source.Git.Repo, ext.Spec.Source.Git.Branch)
+		base := GitRawBaseURL(ext.Spec.Source.Git.Repo, ext.Spec.Source.Git.Branch)
 		return []string{
 			fmt.Sprintf("%s/index.yaml", base),
 			fmt.Sprintf("%s/assets/index.yaml", base),
@@ -98,7 +98,7 @@ func indexURLsForSource(ext *v1beta1.InstallAIExtension, svcURL string) ([]strin
 	}
 }
 
-func gitRawBaseURL(repo string, branch string) string {
+func GitRawBaseURL(repo string, branch string) string {
 	repo = strings.TrimPrefix(repo, "https://")
 	repo = strings.TrimPrefix(repo, "http://")
 	repo = strings.TrimPrefix(repo, "github.com/")

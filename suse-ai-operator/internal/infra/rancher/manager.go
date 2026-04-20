@@ -50,10 +50,42 @@ func (m *Manager) Ensure(
 		return err
 	}
 
-	if err := m.ensureUIPlugin(ctx, ext, svcURL, namespace); err != nil {
-		return err
-	}
-
 	log.Info("Rancher resources ensured")
 	return nil
+}
+
+func (m *Manager) EnsureUIPlugin(
+	ctx context.Context,
+	ext *v1beta1.InstallAIExtension,
+	svcURL string,
+	namespace string,
+) error {
+	return m.ensureUIPlugin(ctx, ext, svcURL, namespace)
+}
+
+func (m *Manager) ResolveLatestVersion(
+	ctx context.Context,
+	ext *v1beta1.InstallAIExtension,
+	svcURL string,
+) (string, error) {
+	log := logging.FromContext(ctx, "rancher.resolve").
+		WithValues(logging.KeyExtension, ext.Spec.Extension.Name)
+
+	indexURLs, err := indexURLsForSource(ext, svcURL)
+	if err != nil {
+		return "", err
+	}
+
+	index, err := getOrFetchIndex(ctx, m.indexCache, indexURLs)
+	if err != nil {
+		return "", err
+	}
+
+	version, err := helm.FindLatestVersion(index, ext.Spec.Extension.Name)
+	if err != nil {
+		return "", err
+	}
+
+	log.Info("Resolved latest version", "version", version)
+	return version, nil
 }
