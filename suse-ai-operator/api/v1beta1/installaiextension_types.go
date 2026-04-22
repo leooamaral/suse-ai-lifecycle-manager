@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package v1alpha1
+package v1beta1
 
 import (
 	apixv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
@@ -31,13 +31,8 @@ type InstallAIExtensionSpec struct {
 	// The following markers will use OpenAPI v3 schema to validate the value
 	// More info: https://book.kubebuilder.io/reference/markers/crd-validation.html
 
-	// Deprecated: Use Source.Helm instead. Will be removed in v1beta1.
-	// +optional
-	Helm *HelmSpec `json:"helm,omitempty"`
-
-	// Source defines where the extension comes from (preferred over Helm).
-	// +optional
-	Source *SourceSpec `json:"source,omitempty"`
+	// +kubebuilder:validation:Required
+	Source SourceSpec `json:"source"`
 
 	// +kubebuilder:validation:Required
 	Extension ExtensionSpec `json:"extension"`
@@ -80,8 +75,17 @@ type ExtensionSpec struct {
 	// +kubebuilder:validation:MinLength=1
 	Name string `json:"name"`
 
-	// +kubebuilder:validation:MinLength=1
-	Version  string            `json:"version"`
+	// +optional
+	Version string `json:"version,omitempty"`
+
+	// Version management policy (git sources only).
+	// "managed" uses the explicit version if set, or resolves latest if empty.
+	// "unmanaged" installs once via helm release, then user manages from Rancher UI.
+	// +kubebuilder:validation:Enum=managed;unmanaged
+	// +kubebuilder:default=managed
+	// +optional
+	VersionPolicy string `json:"versionPolicy,omitempty"`
+
 	Metadata map[string]string `json:"metadata,omitempty"`
 }
 
@@ -95,6 +99,7 @@ type InstallAIExtensionStatus struct {
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
 // +kubebuilder:resource:scope=Cluster,shortName=iae
+// +kubebuilder:storageversion
 
 // InstallAIExtension is the Schema for the installaiextensions API
 type InstallAIExtension struct {
@@ -102,7 +107,7 @@ type InstallAIExtension struct {
 
 	// metadata is a standard object metadata
 	// +optional
-	metav1.ObjectMeta `json:"metadata,omitempty,omitzero"`
+	metav1.ObjectMeta `json:"metadata,omitzero"`
 
 	// spec defines the desired state of InstallAIExtension
 	// +required
@@ -110,7 +115,7 @@ type InstallAIExtension struct {
 
 	// status defines the observed state of InstallAIExtension
 	// +optional
-	Status InstallAIExtensionStatus `json:"status,omitempty,omitzero"`
+	Status InstallAIExtensionStatus `json:"status,omitzero"`
 }
 
 // +kubebuilder:object:root=true
@@ -118,7 +123,7 @@ type InstallAIExtension struct {
 // InstallAIExtensionList contains a list of InstallAIExtension
 type InstallAIExtensionList struct {
 	metav1.TypeMeta `json:",inline"`
-	metav1.ListMeta `json:"metadata,omitempty"`
+	metav1.ListMeta `json:"metadata,omitzero"`
 	Items           []InstallAIExtension `json:"items"`
 }
 

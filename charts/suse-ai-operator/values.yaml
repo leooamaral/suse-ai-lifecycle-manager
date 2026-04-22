@@ -69,3 +69,17 @@ rbacHelpers:
 metrics:
   enable: true
   port: 8443
+
+extension:
+  enable: true
+  crName: suseai
+  chartVersion: 1.1.0
+  version: 1.1.0
+
+webhook:
+  enable: true
+  port: 9443
+  certManager:
+    enable: true
+    # issuerRef: {}  # Optional: use a specific ClusterIssuer
+

@@ -1,0 +1,39 @@
+{{- if .Values.extension.enable }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "suse-ai-operator.fullname" . }}-cleanup
+  namespace: {{ include "suse-ai-operator.namespaceName" . }}
+  labels:
+    {{- include "suse-ai-operator.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": pre-delete
+    "helm.sh/hook-weight": "-10"
+    "helm.sh/hook-delete-policy": hook-succeeded,hook-failed
+spec:
+  backoffLimit: 1
+  ttlSecondsAfterFinished: 60
+  template:
+    spec:
+      serviceAccountName: {{ include "suse-ai-operator.fullname" . }}
+      restartPolicy: Never
+      containers:
+        - name: cleanup
+          image: bitnami/kubectl:latest
+          command:
+            - /bin/sh
+            - -c
+            - |
+              CR_NAME="{{ .Values.extension.crName | default "suseai" }}"
+              echo "Checking if InstallAIExtension CR exists..."
+              if ! kubectl get installaiextension "$CR_NAME" > /dev/null 2>&1; then
+                echo "CR not found, nothing to clean up"
+                exit 0
+              fi
+              echo "Deleting InstallAIExtension CR..."
+              if ! kubectl delete installaiextension "$CR_NAME" --timeout=120s; then
+                echo "Delete timed out, removing finalizer to unblock..."
+                kubectl patch installaiextension "$CR_NAME" --type=merge -p '{"metadata":{"finalizers":[]}}' 2>/dev/null || true
+              fi
+              echo "Cleanup complete"
+{{- end }}

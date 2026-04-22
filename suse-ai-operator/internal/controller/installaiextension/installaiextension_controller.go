@@ -19,6 +19,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"time"
 
 	urlpkg "net/url"
 
@@ -30,18 +31,27 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	aiplatformv1alpha1 "github.com/SUSE/suse-ai-operator/api/v1alpha1"
+	aiplatformv1beta1 "github.com/SUSE/suse-ai-operator/api/v1beta1"
 	helmClient "github.com/SUSE/suse-ai-operator/internal/infra/helm"
 	"github.com/SUSE/suse-ai-operator/internal/infra/kubernetes"
 	"github.com/SUSE/suse-ai-operator/internal/infra/rancher"
 	"github.com/SUSE/suse-ai-operator/internal/installaiextension"
 )
 
+const (
+	readinessTimeout = 5 * time.Minute
+
+	annotationLastSourceType      = "ai-platform.suse.com/last-source-type"
+	annotationLastHelmRelease     = "ai-platform.suse.com/last-helm-release-name"
+	annotationLastClusterRepo     = "ai-platform.suse.com/last-cluster-repo-name"
+	annotationLastUIPluginRelease = "ai-platform.suse.com/last-uiplugin-release-name"
+	annotationLastVersionPolicy   = "ai-platform.suse.com/last-version-policy"
+)
+
 // InstallAIExtensionReconciler reconciles a InstallAIExtension object
 type InstallAIExtensionReconciler struct {
 	client.Client
 	Scheme             *runtime.Scheme
-	Log                logr.Logger
 	Recorder           record.EventRecorder
 	Config             *rest.Config
 	ExtensionNamespace string
@@ -56,73 +66,23 @@ type InstallAIExtensionReconciler struct {
 // +kubebuilder:rbac:groups=catalog.cattle.io,resources=clusterrepos/status,verbs=get;update;patch
 
 // +kubebuilder:rbac:groups="",resources=services,verbs=get;list;watch
+// +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch
 
-// Reconcile is part of the main kubernetes reconciliation loop which aims to
-// move the current state of the cluster closer to the desired state.
-// TODO(user): Modify the Reconcile function to compare the state specified by
-// the InstallAIExtension object against the actual cluster state, and then
-// perform operations to make the cluster state reflect the state specified by
-// the user.
-//
-// For more details, check Reconcile and its Result here:
-// - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.21.0/pkg/reconcile
 func (r *InstallAIExtensionReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-	log := r.Log.WithValues("InstallAIExtension", req.NamespacedName)
+	log := ctrl.LoggerFrom(ctx)
 
 	namespace := r.ExtensionNamespace
 
-	var svcURL string
-
-	var installExt aiplatformv1alpha1.InstallAIExtension
+	var installExt aiplatformv1beta1.InstallAIExtension
 	if err := r.Get(ctx, req.NamespacedName, &installExt); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 
-	releaseName := installExt.Spec.Helm.Name
-	chartVersion := installExt.Spec.Helm.Version
-	values, err := helmClient.ConvertHelmValues(installExt.Spec.Helm.Values)
-	if err != nil {
-		log.Error(err, "failed to convert Helm values")
-		return ctrl.Result{}, err
-	}
-
-	chart := ""
-
-	url := installExt.Spec.Helm.URL
-
-	u, err := urlpkg.Parse(url)
-	if err != nil {
-		log.Error(err, "invalid helm url %q", url)
-	}
-
-	switch u.Scheme {
-	case "oci", "https":
-		chart = url
-	default:
-		log.Error(err, "unsupported helm url scheme: %s", u.Scheme)
-		return ctrl.Result{}, err
-	}
-
-	settings := cli.New()
-	settings.SetNamespace(namespace)
-
-	helm, err := helmClient.New(settings)
-	if err != nil {
-		log.Error(err, "failed to create Helm client")
-		return ctrl.Result{}, err
-	}
-
 	rancherMgr := rancher.NewManager(r.Client, r.Scheme)
 
+	// Handle deletion first (for both source types)
 	if !installExt.ObjectMeta.DeletionTimestamp.IsZero() {
-		if err := r.handleDeletion(
-			ctx,
-			&installExt,
-			helm,
-			rancherMgr,
-			releaseName,
-			namespace,
-		); err != nil {
+		if err := r.handleDeletion(ctx, &installExt, rancherMgr, namespace); err != nil {
 			return ctrl.Result{}, err
 		}
 		return ctrl.Result{}, nil
@@ -136,6 +96,377 @@ func (r *InstallAIExtensionReconciler) Reconcile(ctx context.Context, req ctrl.R
 		return ctrl.Result{Requeue: true}, nil
 	}
 
+	// Check extension name uniqueness
+	if err := r.checkExtensionNameUniqueness(ctx, &installExt); err != nil {
+		if setErr := r.setStatus(ctx, &installExt, aiplatformv1beta1.PhaseFailed, err.Error()); setErr != nil {
+			log.Error(setErr, "failed to update status")
+		}
+		return ctrl.Result{}, nil // user error, don't requeue
+	}
+
+	// Detect source type change and clean up old resources
+	if err := r.detectAndCleanupSourceChange(ctx, log, &installExt, rancherMgr, namespace); err != nil {
+		if setErr := r.setStatus(ctx, &installExt, aiplatformv1beta1.PhaseFailed, err.Error()); setErr != nil {
+			log.Error(setErr, "failed to update status")
+		}
+		return ctrl.Result{}, err
+	}
+
+	// Validate versionPolicy is compatible with source type
+	policy := installExt.Spec.Extension.VersionPolicy
+	if installExt.Spec.Source.Helm != nil && policy == "unmanaged" {
+		msg := "versionPolicy \"unmanaged\" is only supported with git sources"
+		if setErr := r.setStatus(ctx, &installExt, aiplatformv1beta1.PhaseFailed, msg); setErr != nil {
+			log.Error(setErr, "failed to update status")
+		}
+		return ctrl.Result{}, nil // user error, don't requeue
+	}
+
+	var svcURL string
+
+	switch {
+	case installExt.Spec.Source.Helm != nil:
+		svcURL, err = r.reconcileHelmSource(ctx, log, &installExt, namespace)
+		if err != nil {
+			if setErr := r.setStatus(ctx, &installExt, aiplatformv1beta1.PhaseFailed, err.Error()); setErr != nil {
+				log.Error(setErr, "failed to update status")
+			}
+			return ctrl.Result{}, err
+		}
+
+		// Check if deployment is actually ready
+		releaseName := deploymentReleaseName(&installExt)
+		ready, readyErr := kubernetes.IsDeploymentReady(ctx, r.Client, namespace, releaseName, log)
+		if readyErr != nil {
+			log.Error(readyErr, "Failed to check deployment readiness", "release", releaseName, "namespace", namespace)
+			return r.handleNotReady(ctx, &installExt, log)
+		}
+		if !ready {
+			log.Info("Deployment is not ready yet", "release", releaseName, "namespace", namespace)
+			return r.handleNotReady(ctx, &installExt, log)
+		}
+
+	case installExt.Spec.Source.Git != nil:
+		// Git: no deployment to check
+
+	default:
+		return ctrl.Result{}, fmt.Errorf("source must specify either helm or git")
+	}
+
+	resolvedExt := &installExt // default: use original
+	resolvedVersion := installExt.Spec.Extension.Version
+	requeueAfter := time.Duration(0)
+
+	switch installExt.Spec.Extension.VersionPolicy {
+	case "unmanaged":
+		// No version resolution; ensureUIPluginRelease handles install-once
+
+	default: // "managed" or empty
+		if installExt.Spec.Extension.Version == "" {
+			if installExt.Spec.Source.Helm != nil {
+				msg := "spec.extension.version is required for helm sources"
+				if setErr := r.setStatus(ctx, &installExt, aiplatformv1beta1.PhaseFailed, msg); setErr != nil {
+					log.Error(setErr, "failed to update status")
+				}
+				return ctrl.Result{}, nil
+			}
+			// Git source with no version: resolve latest
+			ver, err := rancherMgr.ResolveLatestVersion(ctx, &installExt, svcURL)
+			if err != nil {
+				if setErr := r.setStatus(ctx, &installExt, aiplatformv1beta1.PhaseFailed, err.Error()); setErr != nil {
+					log.Error(setErr, "failed to update status")
+				}
+				return ctrl.Result{}, err
+			}
+			resolvedVersion = ver
+			extCopy := installExt.DeepCopy()
+			extCopy.Spec.Extension.Version = resolvedVersion
+			resolvedExt = extCopy
+			requeueAfter = 5 * time.Minute
+		}
+	}
+
+	// Ensure ClusterRepo
+	if err := rancherMgr.Ensure(ctx, resolvedExt, svcURL, namespace); err != nil {
+		if setErr := r.setStatus(ctx, &installExt, aiplatformv1beta1.PhaseFailed, err.Error()); setErr != nil {
+			log.Error(setErr, "failed to update status")
+		}
+		return ctrl.Result{}, err
+	}
+
+	if resolvedExt.Spec.Extension.VersionPolicy == "unmanaged" {
+		if err := r.ensureUIPluginRelease(ctx, log, resolvedExt, svcURL, namespace); err != nil {
+			if setErr := r.setStatus(ctx, &installExt, aiplatformv1beta1.PhaseFailed, err.Error()); setErr != nil {
+				log.Error(setErr, "failed to update status")
+			}
+			return ctrl.Result{}, err
+		}
+	} else {
+		if err := rancherMgr.EnsureUIPlugin(ctx, resolvedExt, svcURL, namespace); err != nil {
+			if setErr := r.setStatus(ctx, &installExt, aiplatformv1beta1.PhaseFailed, err.Error()); setErr != nil {
+				log.Error(setErr, "failed to update status")
+			}
+			return ctrl.Result{}, err
+		}
+	}
+
+	// Track current source type in annotations for future change detection
+	if err := r.updateSourceAnnotations(ctx, &installExt); err != nil {
+		return ctrl.Result{}, err
+	}
+
+	// Everything succeeded — only update status if not already installed
+	if installExt.Status.Phase != aiplatformv1beta1.PhaseInstalled || installExt.Status.ResolvedVersion != resolvedVersion {
+		msg := fmt.Sprintf("Extension %s installed", installExt.Spec.Extension.Name)
+		installExt.Status.ResolvedVersion = resolvedVersion
+		if err := r.setStatus(ctx, &installExt, aiplatformv1beta1.PhaseInstalled, msg); err != nil {
+			return ctrl.Result{}, err
+		}
+	}
+
+	if requeueAfter > 0 {
+		return ctrl.Result{RequeueAfter: requeueAfter}, nil
+	}
+	return ctrl.Result{}, nil
+}
+
+func deploymentReleaseName(ext *aiplatformv1beta1.InstallAIExtension) string {
+	return ext.Spec.Source.Helm.Name + "-server"
+}
+
+func (r *InstallAIExtensionReconciler) setStatus(
+	ctx context.Context,
+	ext *aiplatformv1beta1.InstallAIExtension,
+	phase, message string,
+) error {
+	ext.Status.Phase = phase
+	ext.Status.Message = message
+	return r.Status().Update(ctx, ext)
+}
+
+func (r *InstallAIExtensionReconciler) handleNotReady(
+	ctx context.Context,
+	ext *aiplatformv1beta1.InstallAIExtension,
+	log logr.Logger,
+) (ctrl.Result, error) {
+
+	// Only set installing if not already in that state
+	if ext.Status.Phase != aiplatformv1beta1.PhaseInstalling {
+		if err := r.setStatus(ctx, ext, aiplatformv1beta1.PhaseInstalling, "Waiting for deployment to be ready"); err != nil {
+			return ctrl.Result{}, err
+		}
+	}
+
+	// Use annotation to track when we started waiting, since we no longer have conditions
+	const waitingSinceAnnotation = "ai-platform.suse.com/waiting-since"
+	var waitingSince time.Time
+
+	if ext.Annotations != nil {
+		if ts, ok := ext.Annotations[waitingSinceAnnotation]; ok {
+			if t, err := time.Parse(time.RFC3339, ts); err == nil {
+				waitingSince = t
+			}
+		}
+	}
+
+	if waitingSince.IsZero() {
+		waitingSince = time.Now()
+		if ext.Annotations == nil {
+			ext.Annotations = make(map[string]string)
+		}
+		ext.Annotations[waitingSinceAnnotation] = waitingSince.Format(time.RFC3339)
+		if err := r.Update(ctx, ext); err != nil {
+			return ctrl.Result{}, err
+		}
+	}
+
+	if time.Since(waitingSince) > readinessTimeout {
+		msg := fmt.Sprintf("Deployment not ready after %s", readinessTimeout)
+		if err := r.setStatus(ctx, ext, aiplatformv1beta1.PhaseFailed, msg); err != nil {
+			return ctrl.Result{}, err
+		}
+		// Clean up annotation
+		delete(ext.Annotations, waitingSinceAnnotation)
+		if len(ext.Annotations) == 0 {
+			ext.Annotations = nil
+		}
+		if err := r.Update(ctx, ext); err != nil {
+			return ctrl.Result{}, err
+		}
+		// Still requeue — deployment might recover
+		return ctrl.Result{RequeueAfter: 1 * time.Minute}, nil
+	}
+
+	elapsed := time.Since(waitingSince).Truncate(time.Second)
+	log.Info("Waiting for deployment to be ready", "elapsed", elapsed)
+	return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
+}
+
+// --- Extension name uniqueness ---
+
+func (r *InstallAIExtensionReconciler) checkExtensionNameUniqueness(
+	ctx context.Context,
+	ext *aiplatformv1beta1.InstallAIExtension,
+) error {
+	var list aiplatformv1beta1.InstallAIExtensionList
+	if err := r.List(ctx, &list); err != nil {
+		return fmt.Errorf("failed to list InstallAIExtension resources: %w", err)
+	}
+
+	for _, other := range list.Items {
+		if other.Name == ext.Name {
+			continue
+		}
+		if other.Spec.Extension.Name == ext.Spec.Extension.Name {
+			return fmt.Errorf(
+				"extension name %q is already used by InstallAIExtension %q",
+				ext.Spec.Extension.Name,
+				other.Name,
+			)
+		}
+	}
+	return nil
+}
+
+// --- Source change detection and cleanup ---
+
+func currentSourceType(ext *aiplatformv1beta1.InstallAIExtension) string {
+	if ext.Spec.Source.Helm != nil {
+		return "helm"
+	}
+	if ext.Spec.Source.Git != nil {
+		return "git"
+	}
+	return ""
+}
+
+func (r *InstallAIExtensionReconciler) detectAndCleanupSourceChange(
+	ctx context.Context,
+	log logr.Logger,
+	ext *aiplatformv1beta1.InstallAIExtension,
+	rancherMgr *rancher.Manager,
+	namespace string,
+) error {
+	if ext.Annotations == nil {
+		return nil // first reconcile, nothing to clean up
+	}
+
+	lastSource := ext.Annotations[annotationLastSourceType]
+	if lastSource == "" {
+		return nil // no previous source tracked
+	}
+
+	current := currentSourceType(ext)
+	if lastSource == current {
+		return nil // no change
+	}
+
+	log.Info("Source type changed, cleaning up old resources",
+		"previousSource", lastSource, "currentSource", current)
+
+	// Clean up old helm release if switching away from helm
+	if lastSource == "helm" {
+		oldRelease := ext.Annotations[annotationLastHelmRelease]
+		if oldRelease != "" {
+			log.Info("Deleting old helm release", "release", oldRelease)
+			settings := cli.New()
+			settings.SetNamespace(namespace)
+			helm, err := helmClient.New(settings)
+			if err != nil {
+				return fmt.Errorf("failed to create helm client for cleanup: %w", err)
+			}
+			if err := helm.DeleteRelease(ctx, oldRelease); err != nil {
+				return fmt.Errorf("failed to delete old helm release %q: %w", oldRelease, err)
+			}
+		}
+	}
+
+	// Clean up old ClusterRepo if the name changed
+	oldClusterRepo := ext.Annotations[annotationLastClusterRepo]
+	if oldClusterRepo != "" {
+		newClusterRepo := ""
+		if ext.Spec.Source.Helm != nil {
+			newClusterRepo = ext.Spec.Source.Helm.Name
+		} else {
+			newClusterRepo = ext.Spec.Extension.Name
+		}
+		if oldClusterRepo != newClusterRepo {
+			log.Info("Deleting old ClusterRepo", "oldName", oldClusterRepo, "newName", newClusterRepo)
+			if err := rancherMgr.DeleteClusterRepoByName(ctx, oldClusterRepo); err != nil {
+				return fmt.Errorf("failed to delete old ClusterRepo %q: %w", oldClusterRepo, err)
+			}
+		}
+	}
+
+	return nil
+}
+
+func (r *InstallAIExtensionReconciler) updateSourceAnnotations(
+	ctx context.Context,
+	ext *aiplatformv1beta1.InstallAIExtension,
+) error {
+	if ext.Annotations == nil {
+		ext.Annotations = make(map[string]string)
+	}
+
+	current := currentSourceType(ext)
+	ext.Annotations[annotationLastSourceType] = current
+
+	switch {
+	case ext.Spec.Source.Helm != nil:
+		ext.Annotations[annotationLastHelmRelease] = deploymentReleaseName(ext)
+		ext.Annotations[annotationLastClusterRepo] = ext.Spec.Source.Helm.Name
+	case ext.Spec.Source.Git != nil:
+		delete(ext.Annotations, annotationLastHelmRelease)
+		ext.Annotations[annotationLastClusterRepo] = ext.Spec.Extension.Name
+	}
+
+	// Track UIPlugin release (all sources)
+	ext.Annotations[annotationLastUIPluginRelease] = ext.Spec.Extension.Name
+	ext.Annotations[annotationLastVersionPolicy] = ext.Spec.Extension.VersionPolicy
+
+	return r.Update(ctx, ext)
+}
+
+// --- Helm source reconciliation ---
+
+func (r *InstallAIExtensionReconciler) reconcileHelmSource(
+	ctx context.Context,
+	log logr.Logger,
+	installExt *aiplatformv1beta1.InstallAIExtension,
+	namespace string,
+) (string, error) {
+	releaseName := deploymentReleaseName(installExt)
+	chartVersion := installExt.Spec.Source.Helm.Version
+	values, err := helmClient.ConvertHelmValues(installExt.Spec.Source.Helm.Values)
+	if err != nil {
+		log.Error(err, "failed to convert Helm values")
+		return "", err
+	}
+	url := installExt.Spec.Source.Helm.URL
+	u, err := urlpkg.Parse(url)
+	if err != nil {
+		log.Error(err, "invalid helm url", "url", url)
+		return "", err
+	}
+
+	var chart string
+	switch u.Scheme {
+	case "oci", "https":
+		chart = url
+	default:
+		return "", fmt.Errorf("unsupported helm url scheme: %s", u.Scheme)
+	}
+
+	settings := cli.New()
+	settings.SetNamespace(namespace)
+
+	helm, err := helmClient.New(settings)
+	if err != nil {
+		log.Error(err, "failed to create Helm client")
+		return "", err
+	}
+
 	err = helm.EnsureRelease(ctx, helmClient.ReleaseSpec{
 		Name:      releaseName,
 		Namespace: namespace,
@@ -144,57 +475,67 @@ func (r *InstallAIExtensionReconciler) Reconcile(ctx context.Context, req ctrl.R
 		Values:    values,
 	})
 	if err != nil {
-		return ctrl.Result{}, err
+		return "", err
 	}
 
 	svc, err := kubernetes.ServiceForHelmRelease(ctx, r.Client, namespace, releaseName)
 	if err != nil {
-		msg := fmt.Sprintf("Error to fetch services")
-		log.Info(msg)
+		log.Info("Error to fetch services")
+		return "", err
 	}
 
 	svcName, svcNamespace, svcPort, err := installaiextension.ServiceEndpoint(svc)
 	if err != nil {
-		msg := fmt.Sprintf("Error to fetch svc info")
-		log.Info(msg)
+		log.Info("Error to fetch svc info")
+		return "", err
 	}
 
-	svcURL = fmt.Sprintf("http://%s.%s:%d", svcName, svcNamespace, svcPort)
+	return fmt.Sprintf("http://%s.%s:%d", svcName, svcNamespace, svcPort), nil
+}
 
-	if err := rancherMgr.Ensure(ctx, &installExt, svcURL, namespace); err != nil {
-		return ctrl.Result{}, err
+func (r *InstallAIExtensionReconciler) ensureUIPluginRelease(
+	ctx context.Context,
+	log logr.Logger,
+	ext *aiplatformv1beta1.InstallAIExtension,
+	svcURL string,
+	namespace string,
+) error {
+	settings := cli.New()
+	settings.SetNamespace(namespace)
+
+	helm, err := helmClient.New(settings)
+	if err != nil {
+		return err
 	}
 
-	var latest aiplatformv1alpha1.InstallAIExtension
-	if err := r.Get(ctx, req.NamespacedName, &latest); err != nil {
-		if client.IgnoreNotFound(err) == nil {
-			return ctrl.Result{}, nil
-		}
-		return ctrl.Result{}, err
+	info, _ := helm.GetRelease(ctx, ext.Spec.Extension.Name)
+	if info != nil {
+		log.Info("UIPlugin release exists, skipping (unmanaged policy)")
+		return nil
 	}
 
-	if latest.Status == (aiplatformv1alpha1.InstallAIExtensionStatus{}) {
-		latest.Status = aiplatformv1alpha1.InstallAIExtensionStatus{}
+	// Determine the chart repo URL
+	var repoURL string
+	switch {
+	case ext.Spec.Source.Helm != nil:
+		repoURL = svcURL
+	case ext.Spec.Source.Git != nil:
+		repoURL = rancher.GitRawBaseURL(ext.Spec.Source.Git.Repo, ext.Spec.Source.Git.Branch)
 	}
 
-	latest.Status.Phase = "Installed"
-	latest.Status.Message = fmt.Sprintf(
-		"Extension %s installed",
-		latest.Spec.Extension.Name,
-	)
-
-	if err := r.Status().Update(ctx, &latest); err != nil {
-		log.Error(err, "failed to update status")
-		return ctrl.Result{}, err
-	}
-
-	return ctrl.Result{}, nil
+	return helm.EnsureRelease(ctx, helmClient.ReleaseSpec{
+		Name:      ext.Spec.Extension.Name,
+		Namespace: namespace,
+		ChartRef:  ext.Spec.Extension.Name,
+		RepoURL:   repoURL,
+		Version:   ext.Spec.Extension.Version,
+	})
 }
 
 // SetupWithManager sets up the controller with the Manager.
 func (r *InstallAIExtensionReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
-		For(&aiplatformv1alpha1.InstallAIExtension{}).
+		For(&aiplatformv1beta1.InstallAIExtension{}).
 		Named("InstallAIExtension").
 		Complete(r)
 }
