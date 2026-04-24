@@ -63,6 +63,14 @@ func (m *Manager) EnsureUIPlugin(
 	return m.ensureUIPlugin(ctx, ext, svcURL, namespace)
 }
 
+func (m *Manager) DeleteUIPlugin(
+	ctx context.Context,
+	ext *v1beta1.InstallAIExtension,
+	namespace string,
+) error {
+	return m.deleteUIPlugin(ctx, ext, namespace)
+}
+
 func (m *Manager) ResolveLatestVersion(
 	ctx context.Context,
 	ext *v1beta1.InstallAIExtension,

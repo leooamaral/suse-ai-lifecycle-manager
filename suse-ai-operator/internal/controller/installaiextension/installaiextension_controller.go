@@ -112,6 +112,24 @@ func (r *InstallAIExtensionReconciler) Reconcile(ctx context.Context, req ctrl.R
 		return ctrl.Result{}, err
 	}
 
+	// Validate mutual exclusivity of source types
+	if installExt.Spec.Source.Helm != nil && installExt.Spec.Source.Git != nil {
+		lastSource := ""
+		if installExt.Annotations != nil {
+			lastSource = installExt.Annotations[annotationLastSourceType]
+		}
+		// Strip the old source, keep the new one
+		if lastSource == "helm" {
+			installExt.Spec.Source.Helm = nil
+		} else {
+			installExt.Spec.Source.Git = nil
+		}
+		if err := r.Update(ctx, &installExt); err != nil {
+			return ctrl.Result{}, err
+		}
+		return ctrl.Result{Requeue: true}, nil
+	}
+
 	// Validate versionPolicy is compatible with source type
 	policy := installExt.Spec.Extension.VersionPolicy
 	if installExt.Spec.Source.Helm != nil && policy == "unmanaged" {
@@ -357,18 +375,33 @@ func (r *InstallAIExtensionReconciler) detectAndCleanupSourceChange(
 	}
 
 	current := currentSourceType(ext)
-	if lastSource == current {
-		return nil // no change
+
+	if lastSource != current {
+		log.Info("Source type changed, cleaning up old resources")
+
+		// Clean up old helm release if switching away from helm
+		if lastSource == "helm" {
+			oldRelease := ext.Annotations[annotationLastHelmRelease]
+			if oldRelease != "" {
+				log.Info("Deleting old helm release", "release", oldRelease)
+				settings := cli.New()
+				settings.SetNamespace(namespace)
+				helm, err := helmClient.New(settings)
+				if err != nil {
+					return fmt.Errorf("failed to create helm client for cleanup: %w", err)
+				}
+				if err := helm.DeleteRelease(ctx, oldRelease); err != nil {
+					return fmt.Errorf("failed to delete old helm release %q: %w", oldRelease, err)
+				}
+			}
+		}
 	}
 
-	log.Info("Source type changed, cleaning up old resources",
-		"previousSource", lastSource, "currentSource", current)
-
-	// Clean up old helm release if switching away from helm
-	if lastSource == "helm" {
+	if current == "helm" {
 		oldRelease := ext.Annotations[annotationLastHelmRelease]
-		if oldRelease != "" {
-			log.Info("Deleting old helm release", "release", oldRelease)
+		newRelease := deploymentReleaseName(ext)
+		if oldRelease != "" && oldRelease != newRelease {
+			log.Info("Helm release name changed, deleting old release", "old", oldRelease, "new", newRelease)
 			settings := cli.New()
 			settings.SetNamespace(namespace)
 			helm, err := helmClient.New(settings)
@@ -398,6 +431,44 @@ func (r *InstallAIExtensionReconciler) detectAndCleanupSourceChange(
 		}
 	}
 
+	// Clean up UIPlugin on version policy change
+	lastPolicy := ext.Annotations[annotationLastVersionPolicy]
+	if lastPolicy == "" {
+		lastPolicy = "managed"
+	}
+	currentPolicy := ext.Spec.Extension.VersionPolicy
+	if currentPolicy == "" {
+		currentPolicy = "managed"
+	}
+
+	if lastPolicy != currentPolicy {
+		log.Info("Version policy changed, cleaning up UIPlugin",
+			"previousPolicy", lastPolicy, "currentPolicy", currentPolicy)
+
+		if lastPolicy == "unmanaged" {
+			// unmanaged → managed: delete UIPlugin helm release so ctrl.CreateOrUpdate can take over
+			oldUIRelease := ext.Annotations[annotationLastUIPluginRelease]
+			if oldUIRelease != "" {
+				log.Info("Deleting UIPlugin helm release (switching to managed)", "release", oldUIRelease)
+				settings := cli.New()
+				settings.SetNamespace(namespace)
+				helm, err := helmClient.New(settings)
+				if err != nil {
+					return fmt.Errorf("failed to create helm client for UIPlugin cleanup: %w", err)
+				}
+				if err := helm.DeleteRelease(ctx, oldUIRelease); err != nil {
+					return fmt.Errorf("failed to delete UIPlugin helm release %q: %w", oldUIRelease, err)
+				}
+			}
+		} else {
+			// managed → unmanaged: delete UIPlugin k8s object so helm can create a fresh release
+			log.Info("Deleting UIPlugin k8s object (switching to unmanaged)")
+			if err := rancherMgr.DeleteUIPlugin(ctx, ext, namespace); err != nil {
+				return fmt.Errorf("failed to delete UIPlugin for policy change: %w", err)
+			}
+		}
+	}
+
 	return nil
 }
 
@@ -410,20 +481,46 @@ func (r *InstallAIExtensionReconciler) updateSourceAnnotations(
 	}
 
 	current := currentSourceType(ext)
-	ext.Annotations[annotationLastSourceType] = current
+
+	// Build expected annotations
+	expected := map[string]string{
+		annotationLastSourceType:      current,
+		annotationLastUIPluginRelease: ext.Spec.Extension.Name,
+		annotationLastVersionPolicy:   ext.Spec.Extension.VersionPolicy,
+	}
 
 	switch {
 	case ext.Spec.Source.Helm != nil:
-		ext.Annotations[annotationLastHelmRelease] = deploymentReleaseName(ext)
-		ext.Annotations[annotationLastClusterRepo] = ext.Spec.Source.Helm.Name
+		expected[annotationLastHelmRelease] = deploymentReleaseName(ext)
+		expected[annotationLastClusterRepo] = ext.Spec.Source.Helm.Name
 	case ext.Spec.Source.Git != nil:
-		delete(ext.Annotations, annotationLastHelmRelease)
-		ext.Annotations[annotationLastClusterRepo] = ext.Spec.Extension.Name
+		expected[annotationLastClusterRepo] = ext.Spec.Extension.Name
 	}
 
-	// Track UIPlugin release (all sources)
-	ext.Annotations[annotationLastUIPluginRelease] = ext.Spec.Extension.Name
-	ext.Annotations[annotationLastVersionPolicy] = ext.Spec.Extension.VersionPolicy
+	// Check if any annotation actually changed
+	changed := false
+	for k, v := range expected {
+		if ext.Annotations[k] != v {
+			changed = true
+			break
+		}
+	}
+	// Check if helm release annotation needs to be removed (git source)
+	if ext.Spec.Source.Git != nil && ext.Annotations[annotationLastHelmRelease] != "" {
+		changed = true
+	}
+
+	if !changed {
+		return nil
+	}
+
+	// Apply changes
+	for k, v := range expected {
+		ext.Annotations[k] = v
+	}
+	if ext.Spec.Source.Git != nil {
+		delete(ext.Annotations, annotationLastHelmRelease)
+	}
 
 	return r.Update(ctx, ext)
 }
