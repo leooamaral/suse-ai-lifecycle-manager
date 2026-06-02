@@ -10,10 +10,6 @@ env:
   CHART_REGISTRY: oci://ghcr.io/leooamaral/chart
   IMAGE_NAME: ghcr.io/leooamaral/aif-ui
 
-defaults:
-  run:
-    working-directory: pkg/aif-ui
-
 jobs:
   prepare:
     runs-on: ubuntu-latest
