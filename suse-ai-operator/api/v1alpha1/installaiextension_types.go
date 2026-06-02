@@ -26,31 +26,10 @@ import (
 
 // InstallAIExtensionSpec defines the desired state of InstallAIExtension
 type InstallAIExtensionSpec struct {
-	// INSERT ADDITIONAL SPEC FIELDS - desired state of cluster
-	// Important: Run "make" to regenerate code after modifying this file
-	// The following markers will use OpenAPI v3 schema to validate the value
-	// More info: https://book.kubebuilder.io/reference/markers/crd-validation.html
-
-	// Deprecated: Use Source.Helm instead. Will be removed in v1beta1.
-	// +optional
 	Helm *HelmSpec `json:"helm,omitempty"`
-
-	// Source defines where the extension comes from (preferred over Helm).
-	// +optional
-	Source *SourceSpec `json:"source,omitempty"`
 
 	// +kubebuilder:validation:Required
 	Extension ExtensionSpec `json:"extension"`
-}
-
-type SourceSpec struct {
-	// Helm chart source
-	// +optional
-	Helm *HelmSpec `json:"helm,omitempty"`
-
-	// Git repository source
-	// +optional
-	Git *GitSpec `json:"git,omitempty"`
 }
 
 type HelmSpec struct {
@@ -67,15 +46,6 @@ type HelmSpec struct {
 	Values  map[string]apixv1.JSON `json:"values,omitempty"`
 }
 
-type GitSpec struct {
-	Repo string `json:"repo"`
-
-	// Git branch to use
-	// +kubebuilder:validation:Required
-	// +kubebuilder:validation:MinLength=1
-	Branch string `json:"branch"`
-}
-
 type ExtensionSpec struct {
 	// +kubebuilder:validation:MinLength=1
 	Name string `json:"name"`
@@ -87,9 +57,8 @@ type ExtensionSpec struct {
 
 // InstallAIExtensionStatus defines the observed state of InstallAIExtension.
 type InstallAIExtensionStatus struct {
-	Phase           string `json:"phase,omitempty"`
-	Message         string `json:"message,omitempty"`
-	ResolvedVersion string `json:"resolvedVersion,omitempty"`
+	Phase   string `json:"phase,omitempty"`
+	Message string `json:"message,omitempty"`
 }
 
 // +kubebuilder:object:root=true

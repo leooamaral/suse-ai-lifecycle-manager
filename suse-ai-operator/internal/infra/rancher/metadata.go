@@ -3,12 +3,10 @@ package rancher
 import (
 	"context"
 	"fmt"
-	"strings"
 	"time"
 
 	"golang.org/x/exp/maps"
 
-	"github.com/SUSE/suse-ai-operator/api/v1beta1"
 	"github.com/SUSE/suse-ai-operator/internal/infra/helm"
 	logging "github.com/SUSE/suse-ai-operator/internal/logging"
 )
@@ -23,11 +21,10 @@ func buildExtensionMetadata(
 	ctx context.Context,
 	indexCache *helm.IndexCache,
 	repoURL string,
-	ext *v1beta1.InstallAIExtension,
+	extensionName string,
+	version string,
+	userMeta map[string]string,
 ) (map[string]string, error) {
-
-	extensionName := ext.Spec.Extension.Name
-	version := ext.Spec.Extension.Version
 
 	log := logging.FromContext(ctx, "rancher.metadata").
 		WithValues(
@@ -35,14 +32,9 @@ func buildExtensionMetadata(
 			logging.KeyVersion, version,
 		)
 
-	logging.Debug(log).Info("Resolving extension metadata from index")
+	logging.Debug(log).Info("Resolving extension metadata from Helm index")
 
-	indexURLs, err := indexURLsForSource(ext, repoURL)
-	if err != nil {
-		return nil, err
-	}
-
-	index, err := getOrFetchIndex(ctx, indexCache, indexURLs)
+	index, err := getOrFetchIndex(ctx, indexCache, repoURL)
 	if err != nil {
 		log.Error(err, "Failed to load Helm index")
 		return nil, err
@@ -61,11 +53,6 @@ func buildExtensionMetadata(
 		"metadata", indexMeta,
 	)
 
-	userMeta := ext.Spec.Extension.Metadata
-	if userMeta == nil {
-		userMeta = map[string]string{}
-	}
-
 	final := mergeMetadata(indexMeta, userMeta, extensionName)
 
 	logging.Debug(log).Info(
@@ -78,67 +65,31 @@ func buildExtensionMetadata(
 	return maps.Clone(final), nil
 }
 
-func indexURLsForSource(ext *v1beta1.InstallAIExtension, svcURL string) ([]string, error) {
-
-	switch {
-	case ext.Spec.Source.Helm != nil:
-		return []string{
-			fmt.Sprintf("%s/index.yaml", svcURL),
-		}, nil
-
-	case ext.Spec.Source.Git != nil:
-		base := GitRawBaseURL(ext.Spec.Source.Git.Repo, ext.Spec.Source.Git.Branch)
-		return []string{
-			fmt.Sprintf("%s/index.yaml", base),
-			fmt.Sprintf("%s/assets/index.yaml", base),
-		}, nil
-
-	default:
-		return nil, fmt.Errorf("source must specify either helm or git")
-	}
-}
-
-func GitRawBaseURL(repo string, branch string) string {
-	repo = strings.TrimPrefix(repo, "https://")
-	repo = strings.TrimPrefix(repo, "http://")
-	repo = strings.TrimPrefix(repo, "github.com/")
-	repo = strings.TrimSuffix(repo, ".git")
-
-	return fmt.Sprintf("https://raw.githubusercontent.com/%s/refs/heads/%s", repo, branch)
-}
-
 func getOrFetchIndex(
 	ctx context.Context,
 	cache *helm.IndexCache,
-	indexURLs []string,
+	repoURL string,
 ) (*helm.IndexFile, error) {
 
-	// Check cache for any of the URLs
-	for _, url := range indexURLs {
-		key := helm.IndexCacheKey{RepoURL: url}
-		if entry, ok := cache.Get(key); ok {
-			return entry.Index, nil
-		}
+	key := helm.IndexCacheKey{RepoURL: repoURL}
+
+	if entry, ok := cache.Get(key); ok {
+		return entry.Index, nil
 	}
 
-	// Try each URL in order
-	var lastErr error
-	for _, url := range indexURLs {
-		index, err := helm.FetchIndex(url)
-		if err != nil {
-			lastErr = err
-			continue
-		}
+	indexURL := fmt.Sprintf("%s/index.yaml", repoURL)
 
-		cache.Set(helm.IndexCacheKey{RepoURL: url}, &helm.IndexCacheEntry{
-			Index:     index,
-			FetchedAt: time.Now(),
-		})
-
-		return index, nil
+	index, err := helm.FetchIndex(indexURL)
+	if err != nil {
+		return nil, err
 	}
 
-	return nil, fmt.Errorf("failed to fetch index.yaml from any URL: %w", lastErr)
+	cache.Set(key, &helm.IndexCacheEntry{
+		Index:     index,
+		FetchedAt: time.Now(),
+	})
+
+	return index, nil
 }
 
 func filterSupportedMetadata(

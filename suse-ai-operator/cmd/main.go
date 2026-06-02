@@ -17,18 +17,24 @@ limitations under the License.
 package main
 
 import (
+	"context"
 	"crypto/tls"
 	"flag"
+	"net/http"
 	"os"
+	"time"
 
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
 	// to ensure that exec-entrypoint and run can make use of them.
 	_ "k8s.io/client-go/plugin/pkg/client/auth"
 
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/cache"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	"sigs.k8s.io/controller-runtime/pkg/metrics/filters"
@@ -36,13 +42,11 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
 	aiplatformv1alpha1 "github.com/SUSE/suse-ai-operator/api/v1alpha1"
+	"github.com/SUSE/suse-ai-operator/internal/api"
 	"github.com/SUSE/suse-ai-operator/internal/config"
-
+	aiworkloadctrl "github.com/SUSE/suse-ai-operator/internal/controller/aiworkload"
 	aiextensionctrl "github.com/SUSE/suse-ai-operator/internal/controller/installaiextension"
-
-	aiplatformv1beta1 "github.com/SUSE/suse-ai-operator/api/v1beta1"
-
-	conversionwebhook "sigs.k8s.io/controller-runtime/pkg/webhook/conversion"
+	settingsctrl "github.com/SUSE/suse-ai-operator/internal/controller/settings"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -55,7 +59,6 @@ func init() {
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
 
 	utilruntime.Must(aiplatformv1alpha1.AddToScheme(scheme))
-	utilruntime.Must(aiplatformv1beta1.AddToScheme(scheme))
 	// +kubebuilder:scaffold:scheme
 }
 
@@ -86,6 +89,8 @@ func main() {
 	flag.StringVar(&metricsCertKey, "metrics-cert-key", "tls.key", "The name of the metrics server key file.")
 	flag.BoolVar(&enableHTTP2, "enable-http2", false,
 		"If set, HTTP/2 will be enabled for the metrics and webhook servers")
+	var apiBindAddr string
+	flag.StringVar(&apiBindAddr, "api-bind-address", ":8080", "The address the operator API binds to.")
 	opts := zap.Options{
 		Development: true,
 	}
@@ -161,6 +166,8 @@ func main() {
 		metricsServerOptions.KeyName = metricsCertKey
 	}
 
+	operatorNamespace := config.GetOperatorNamespace()
+
 	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
 		Scheme:                 scheme,
 		Metrics:                metricsServerOptions,
@@ -168,6 +175,14 @@ func main() {
 		HealthProbeBindAddress: probeAddr,
 		LeaderElection:         enableLeaderElection,
 		LeaderElectionID:       "77d8cb24.suse.com",
+		Cache: cache.Options{
+			ByObject: map[client.Object]cache.ByObject{
+				// Watch secrets across all namespaces: settings controller needs
+				// operatorNamespace secrets; aiworkload controller needs Helm
+				// release secrets (owner=helm) from any target namespace.
+				&corev1.Secret{}: {},
+			},
+		},
 		// LeaderElectionReleaseOnCancel defines if the leader should step down voluntarily
 		// when the Manager ends. This requires the binary to immediately end when the
 		// Manager is stopped, otherwise, this setting is unsafe. Setting this significantly
@@ -195,9 +210,22 @@ func main() {
 		setupLog.Error(err, "unable to create controller", "controller", "InstallAIExtension")
 		os.Exit(1)
 	}
-
-	mgr.GetWebhookServer().Register("/convert", conversionwebhook.NewWebhookHandler(mgr.GetScheme()))
-
+	if err := (&settingsctrl.SettingsReconciler{
+		Client: mgr.GetClient(),
+		Scheme: mgr.GetScheme(),
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "Settings")
+		os.Exit(1)
+	}
+	if err := (&aiworkloadctrl.AIWorkloadReconciler{
+		Client:            mgr.GetClient(),
+		Scheme:            mgr.GetScheme(),
+		RestConfig:        mgr.GetConfig(),
+		OperatorNamespace: operatorNamespace,
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "AIWorkload")
+		os.Exit(1)
+	}
 	// +kubebuilder:scaffold:builder
 
 	if err := mgr.AddHealthzCheck("healthz", healthz.Ping); err != nil {
@@ -209,8 +237,31 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Start the operator HTTP API server.
+	mux := http.NewServeMux()
+	api.NewSettingsHandler(mgr.GetClient(), operatorNamespace).Register(mux)
+	api.NewAIWorkloadHandler(mgr.GetClient()).Register(mux)
+	api.NewBlueprintHandler(mgr.GetClient()).Register(mux)
+	srv := &http.Server{Addr: apiBindAddr, Handler: api.Chain(mux)}
+
+	ctx := ctrl.SetupSignalHandler()
+	go func() {
+		setupLog.Info("starting operator API", "address", apiBindAddr)
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			setupLog.Error(err, "operator API server exited unexpectedly")
+		}
+	}()
+	go func() {
+		<-ctx.Done()
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := srv.Shutdown(shutdownCtx); err != nil {
+			setupLog.Error(err, "HTTP server shutdown failed")
+		}
+	}()
+
 	setupLog.Info("starting manager")
-	if err := mgr.Start(ctrl.SetupSignalHandler()); err != nil {
+	if err := mgr.Start(ctx); err != nil {
 		setupLog.Error(err, "problem running manager")
 		os.Exit(1)
 	}

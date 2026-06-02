@@ -5,7 +5,6 @@ import (
 	"io"
 	"net/http"
 
-	"github.com/Masterminds/semver/v3"
 	"gopkg.in/yaml.v3"
 )
 
@@ -64,30 +63,4 @@ func FindAnnotations(
 		version,
 		chartName,
 	)
-}
-
-func FindLatestVersion(index *IndexFile, chartName string) (string, error) {
-	versions, ok := index.Entries[chartName]
-	if !ok {
-		return "", fmt.Errorf("chart %q not found in index", chartName)
-	}
-
-	var latest *semver.Version
-	var latestStr string
-
-	for _, v := range versions {
-		sv, err := semver.NewVersion(v.Version)
-		if err != nil {
-			continue
-		}
-		if latest == nil || sv.GreaterThan(latest) {
-			latest = sv
-			latestStr = v.Version
-		}
-	}
-
-	if latest == nil {
-		return "", fmt.Errorf("no valid semver versions found for chart %q", chartName)
-	}
-	return latestStr, nil
 }

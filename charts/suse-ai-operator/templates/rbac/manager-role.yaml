@@ -6,19 +6,63 @@ rules:
   - apiGroups:
       - ""
     resources:
+      - namespaces
+    verbs:
+      - create
+      - get
+      - patch
+  - apiGroups:
+      - ""
+    resources:
+      - configmaps
+      - persistentvolumeclaims
+      - pods
+      - serviceaccounts
+    verbs:
+      - delete
+      - get
+      - list
+  - apiGroups:
+      - ""
+    resources:
+      - secrets
+    verbs:
+      - create
+      - delete
+      - get
+      - list
+      - patch
+      - update
+      - watch
+  - apiGroups:
+      - ""
+    resources:
       - services
     verbs:
+      - delete
       - get
       - list
       - watch
   - apiGroups:
-    - apps
+      - apps
     resources:
-    - deployments
+      - daemonsets
+      - deployments
+      - replicasets
+      - statefulsets
     verbs:
-    - get
-    - list
-    - watch
+      - delete
+      - get
+      - list
+  - apiGroups:
+      - rbac.authorization.k8s.io
+    resources:
+      - rolebindings
+      - roles
+    verbs:
+      - delete
+      - get
+      - list
   - apiGroups:
       - ai-platform.suse.com
     resources:
@@ -72,6 +116,96 @@ rules:
       - get
       - patch
       - update
+  - apiGroups:
+      - ai-platform.suse.com
+    resources:
+      - settings
+    verbs:
+      - create
+      - delete
+      - get
+      - list
+      - patch
+      - update
+      - watch
+  - apiGroups:
+      - ai-platform.suse.com
+    resources:
+      - settings/status
+    verbs:
+      - get
+      - patch
+      - update
+  - apiGroups:
+      - ai-platform.suse.com
+    resources:
+      - blueprints
+    verbs:
+      - create
+      - delete
+      - get
+      - list
+      - patch
+      - update
+      - watch
+  - apiGroups:
+      - ai-platform.suse.com
+    resources:
+      - aiworkloads
+    verbs:
+      - create
+      - delete
+      - get
+      - list
+      - patch
+      - update
+      - watch
+  - apiGroups:
+      - ai-platform.suse.com
+    resources:
+      - aiworkloads/status
+    verbs:
+      - get
+      - patch
+      - update
+  - apiGroups:
+      - ai-platform.suse.com
+    resources:
+      - aiworkloads/finalizers
+    verbs:
+      - update
+  - apiGroups:
+      - fleet.cattle.io
+    resources:
+      - bundledeployments
+    verbs:
+      - get
+      - list
+      - watch
+  - apiGroups:
+      - fleet.cattle.io
+    resources:
+      - gitrepos
+    verbs:
+      - create
+      - delete
+      - get
+      - list
+      - patch
+      - update
+      - watch
+  - apiGroups:
+      - fleet.cattle.io
+    resources:
+      - helmops
+    verbs:
+      - create
+      - delete
+      - get
+      - list
+      - patch
+      - update
+      - watch
 
 ---
 
