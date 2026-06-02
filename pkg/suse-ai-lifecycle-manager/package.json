@@ -1,16 +1,16 @@
 {
-  "name": "aif-ui",
-  "description": "AIF UI",
-  "version": "0.1.0",
+  "name": "suse-ai-lifecycle-manager",
+  "description": "SUSE AI Lifecycle Manager",
+  "version": "1.1.0",
   "private": false,
   "rancher": {
     "annotations": {
       "catalog.cattle.io/rancher-version": ">= 2.10.0",
-      "catalog.cattle.io/display-name": "AIF UI",
+      "catalog.cattle.io/display-name": "SUSE AI Lifecycle Manager",
       "catalog.cattle.io/ui-extensions-version": ">= 3.0.0 < 4.0.0"
     }
   },
-  "icon": "https://raw.githubusercontent.com/SUSE/suse-ai-lifecycle-manager/refs/heads/main/pkg/aif-ui/assets/logo.svg",
+  "icon": "https://raw.githubusercontent.com/SUSE/suse-ai-lifecycle-manager/refs/heads/main/pkg/suse-ai-lifecycle-manager/assets/logo.svg",
   "scripts": {
     "typecheck": "vue-tsc --noEmit",
     "lint": "npx eslint --max-warnings 2000 --ext .js,.ts,.vue .",

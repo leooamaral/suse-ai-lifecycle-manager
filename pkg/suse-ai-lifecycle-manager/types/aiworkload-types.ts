@@ -1,4 +1,4 @@
-// pkg/aif-ui/types/aiworkload-types.ts
+// pkg/suse-ai-lifecycle-manager/types/aiworkload-types.ts
 export type AIWorkloadSourceType = 'App' | 'Blueprint';
 export type AIWorkloadDeployStrategy = 'Helm' | 'FleetBundle' | 'GitOps';
 export type AIWorkloadPhase = 'Pending' | 'Running' | 'Degraded' | 'Failed';
