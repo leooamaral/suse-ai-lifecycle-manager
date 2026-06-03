@@ -7,8 +7,8 @@ on:
 
 env:
   CHART_PATH: charts/aif-ui
-  CHART_REGISTRY: oci://ghcr.io/suse/chart
-  IMAGE_NAME: ghcr.io/suse/aif-ui
+  CHART_REGISTRY: oci://ghcr.io/leooamaral/charts
+  IMAGE_NAME: ghcr.io/leooamaral/aif-ui
 
 jobs:
   prepare:
@@ -110,7 +110,7 @@ jobs:
       - name: Build extension image
         run: |
           TAG="aif-ui-${{ needs.prepare.outputs.VERSION }}"
-          yarn publish-pkgs -c -i '' -r ghcr.io -o 'suse' -t "$TAG"
+          yarn publish-pkgs -c -i '' -r ghcr.io -o 'leooamaral' -t "$TAG"
 
       - name: Tag and push image
         run: |
@@ -155,7 +155,7 @@ jobs:
           yq -i '.appVersion = "${{ needs.prepare.outputs.VERSION }}"' $CHART_PATH/Chart.yaml
           yq -i '
             .annotations."helm.sh/images" =
-            "- image: ghcr.io/suse/aif-ui:${{ needs.prepare.outputs.VERSION }}\n  name: aif-ui"
+            "- image: ghcr.io/leooamaral/aif-ui:${{ needs.prepare.outputs.VERSION }}\n  name: aif-ui"
           ' $CHART_PATH/Chart.yaml
           yq -i '.image.tag = "${{ needs.prepare.outputs.VERSION }}"' $CHART_PATH/values.yaml
 
