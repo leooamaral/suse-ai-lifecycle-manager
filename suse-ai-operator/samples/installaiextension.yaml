@@ -4,9 +4,9 @@ metadata:
   name: suseai
 spec:
   helm:
-    name: suse-ai-lifecycle-manager
-    url: "oci://ghcr.io/suse/chart/suse-ai-lifecycle-manager"
-    version: "1.0.0"
+    name: aif-ui
+    url: "oci://ghcr.io/leooamaral/charts/aif-ui"
+    version: "0.1.0"
   extension:
-    name: suse-ai-lifecycle-manager
-    version: "1.0.0"
+    name: aif-ui
+    version: "0.1.0"
