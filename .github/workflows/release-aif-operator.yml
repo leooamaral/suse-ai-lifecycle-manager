@@ -6,9 +6,9 @@ on:
       - aif-operator-*
 
 env:
-  IMAGE_NAME: ghcr.io/suse/aif-operator
+  IMAGE_NAME: ghcr.io/leooamaral/aif-operator
   CHART_PATH: charts/aif-operator
-  CHART_REGISTRY: oci://ghcr.io/suse/chart
+  CHART_REGISTRY: oci://ghcr.io/leooamaral/chart
 
 jobs:
   verify-ancestry:
@@ -144,7 +144,7 @@ jobs:
           yq -i '.appVersion = "${{ needs.prepare.outputs.VERSION }}"' $CHART_PATH/Chart.yaml
           yq -i '
             .annotations."helm.sh/images" =
-            "- image: ghcr.io/suse/aif-operator:${{ needs.prepare.outputs.VERSION }}\n  name: aif-operator"
+            "- image: ghcr.io/leooamaral/aif-operator:${{ needs.prepare.outputs.VERSION }}\n  name: aif-operator"
           ' $CHART_PATH/Chart.yaml
 
       - name: Package and push Helm chart
