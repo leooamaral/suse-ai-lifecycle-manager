@@ -102,7 +102,7 @@ api:
 # UI extension auto-install — creates an InstallAIExtension CR when the operator is deployed.
 # Set aiExtension.enabled=false to skip extension installation.
 aiExtension:
-  enabled: false
+  enabled: true
   source:
     kind: Helm
     helm:
