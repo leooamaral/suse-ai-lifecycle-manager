@@ -5,29 +5,35 @@
     </div>
 
     <div class="form-group">
-      <label class="lbl required">Workload Name</label>
+      <label class="lbl required">{{ t('suseai.wizard.form.workloadName', 'Instance Name') }}</label>
       <input
         v-model="localName"
         type="text"
         class="form-control"
-        placeholder="e.g. my-ai-deployment"
+        :placeholder="t('suseai.wizard.form.workloadNamePlaceholder', 'e.g. my-ai-deployment')"
         @input="emit('update:workloadName', localName)"
       />
-      <small class="text-muted">Used as prefix for Fleet Bundle names</small>
+      <small class="text-muted">{{ t('suseai.wizard.form.workloadNameHelp', 'Used as prefix for Fleet Bundle names') }}</small>
     </div>
 
     <div class="form-group">
-      <label class="lbl required">Target Namespace</label>
-      <select v-model="localNs" class="form-control" @change="emit('update:namespace', localNs)">
-        <option v-for="ns in namespaceOptions" :key="ns" :value="ns">{{ ns }}</option>
-      </select>
+      <NamespaceAutocomplete
+        :value="localNs"
+        :label="t('suseai.wizard.form.namespace', 'Namespace')"
+        :options="namespaceOptions"
+        :required="true"
+        :loading="loadingNamespaces"
+        @update:value="onNamespaceChange"
+      />
     </div>
   </div>
 </template>
 
 <script lang="ts" setup>
 import { ref, onMounted, getCurrentInstance } from 'vue';
-import { getClusters, listNamespaces } from '../../../services/rancher-apps';
+import { useT } from '../../../composables/useT';
+import NamespaceAutocomplete from './NamespaceAutocomplete.vue';
+import { fetchUserNamespaces } from '../../../services/rancher-apps';
 
 interface Props {
   displayName:    string;
@@ -46,36 +52,30 @@ const emit  = defineEmits<Emits>();
 const vm    = getCurrentInstance()!.proxy as any;
 const store = vm.$store;
 
-const localName = ref(props.workloadName);
-const localNs   = ref(props.namespace);
-const namespaceOptions = ref<string[]>([]);
+const t = useT();
 
-const SYSTEM_PREFIXES = ['c-', 'p-', 'kube-', 'cattle-', 'rancher', 'longhorn-', 'fleet-', 'cluster-fleet-', 'system-', 'istio-'];
+const localName         = ref(props.workloadName);
+const localNs           = ref(props.namespace);
+const namespaceOptions  = ref<Array<{ label: string; value: string }>>([]);
+const loadingNamespaces = ref(false);
 
 onMounted(async () => {
+  loadingNamespaces.value = true;
   try {
-    const clusters = await getClusters(store);
-    const allNs = new Set<string>();
-    for (const cl of clusters) {
-      try {
-        const nsList = await listNamespaces(store, cl.id);
-        nsList.forEach(ns => allNs.add(ns));
-      } catch {}
-    }
-    const filtered = [...allNs]
-      .filter(ns => !SYSTEM_PREFIXES.some(p => ns.startsWith(p)))
-      .sort();
-    const suggested = `${ props.workloadName }-system`;
-    if (!filtered.includes(suggested)) filtered.unshift(suggested);
-    namespaceOptions.value = filtered;
-  } catch {
-    namespaceOptions.value = [`${ props.workloadName }-system`];
+    namespaceOptions.value = await fetchUserNamespaces(store, `${props.workloadName}-system`);
+  } finally {
+    loadingNamespaces.value = false;
   }
   if (!localNs.value && namespaceOptions.value.length) {
-    localNs.value = namespaceOptions.value[0];
+    localNs.value = namespaceOptions.value[0].value;
     emit('update:namespace', localNs.value);
   }
 });
+
+function onNamespaceChange(v: string) {
+  localNs.value = v;
+  emit('update:namespace', v);
+}
 </script>
 
 <style lang="scss" scoped>

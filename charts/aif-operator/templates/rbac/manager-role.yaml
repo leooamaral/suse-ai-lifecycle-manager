@@ -195,6 +195,14 @@ rules:
   - apiGroups:
       - fleet.cattle.io
     resources:
+      - bundles
+    verbs:
+      - delete
+      - get
+      - list
+  - apiGroups:
+      - fleet.cattle.io
+    resources:
       - gitrepos
     verbs:
       - create
@@ -226,6 +234,18 @@ metadata:
   name: {{ include "aif-operator.fullname" . }}
   namespace: {{ include "aif-operator.extensionsNamespace" . }}
 rules:
+  - apiGroups:
+      - ""
+    resources:
+      - configmaps
+    verbs:
+      - create
+      - delete
+      - get
+      - list
+      - patch
+      - update
+      - watch
   - apiGroups:
       - ""
     resources:

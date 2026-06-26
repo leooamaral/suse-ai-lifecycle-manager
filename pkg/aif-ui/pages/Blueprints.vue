@@ -33,10 +33,12 @@
         </div>
       </header>
 
+      <OperatorErrorBanner v-if="operatorError" :operator-error="operatorError" @retry="retryConnection" />
+
       <Banner v-if="error" color="error">{{ error }}</Banner>
 
       <div class="main-content">
-        <div v-if="!loading && !sortedFamilies.length && !error" class="empty-state-content">
+        <div v-if="!loading && !sortedFamilies.length && !error && !operatorError" class="empty-state-content">
           <i class="icon icon-folder-open icon-4x text-muted" />
           <h3>No blueprints found</h3>
           <p class="text-muted">Click Create to define your first blueprint.</p>
@@ -51,7 +53,7 @@
             <div class="tile-header">
               <div class="tile-info">
                 <div class="tile-title-row">
-                  <h3 class="tile-title">{{ toTitleCase(latestFor(versions).spec.displayName) }}</h3>
+                  <h3 class="tile-title">{{ latestFor(versions).spec.displayName }}</h3>
                   <select
                     v-model="selectedVersions[family]"
                     class="version-select form-control-sm"
@@ -68,6 +70,8 @@
                 </div>
                 <div class="tile-meta">
                   <span class="tile-meta-item">{{ componentCount(versions, family) }} apps</span>
+                  <span class="tile-meta-sep">·</span>
+                  <Tag :aria-label="`Source: ${ sourceLabel(versions) }`">{{ sourceLabel(versions) }}</Tag>
                 </div>
               </div>
             </div>
@@ -163,16 +167,20 @@ import { Banner } from '@components/Banner';
 import { Checkbox } from '@components/Form/Checkbox';
 import ActionMenuShell from '@shell/components/ActionMenuShell';
 import AppModal from '@shell/components/AppModal';
+import Tag from '@shell/components/Tag.vue';
+import { isAdminUser } from '@shell/store/type-map';
 import {
-  listBlueprints, deleteBlueprint, updateBlueprintDeprecated, groupBlueprintsByFamily, latestVersion,
+  listBlueprints, deleteBlueprint, updateBlueprintDeprecated, groupBlueprintsByFamily, latestVersion, sourceFor,
 } from '../utils/blueprint-api';
 import { listAIWorkloads } from '../utils/operator-api';
+import { checkOperatorConnection, getConnectionError } from '../utils/operator-config';
+import OperatorErrorBanner from '../components/OperatorErrorBanner.vue';
 import type { Blueprint } from '../types/blueprint-types';
 import { PRODUCT } from '../config/suseai';
 
 export default defineComponent({
   name: 'SuseAIBlueprints',
-  components: { Banner, Checkbox, ActionMenuShell, AppModal },
+  components: { Banner, Checkbox, ActionMenuShell, AppModal, Tag, OperatorErrorBanner },
   setup() {
     const vm        = getCurrentInstance()!.proxy as any;
     const $router   = vm.$router;
@@ -181,6 +189,7 @@ export default defineComponent({
 
     const loading         = ref(true);
     const error           = ref<string | null>(null);
+    const operatorError   = ref<string | null>(null);
     const search          = ref('');
     const sortBy          = ref('name-asc');
     const blueprints      = ref<Blueprint[]>([]);
@@ -280,6 +289,12 @@ export default defineComponent({
     async function refresh() {
       loading.value = true;
       error.value = null;
+      await checkOperatorConnection();
+      operatorError.value = getConnectionError();
+      if (operatorError.value) {
+        loading.value = false;
+        return;
+      }
       try {
         const list = await listBlueprints();
         blueprints.value = list.items || [];
@@ -301,6 +316,14 @@ export default defineComponent({
       } finally {
         loading.value = false;
       }
+    }
+
+    async function retryConnection() {
+      loading.value = true;
+      await checkOperatorConnection(true);
+      operatorError.value = getConnectionError();
+      if (!operatorError.value) await refresh();
+      else loading.value = false;
     }
 
     async function silentRefresh() {
@@ -453,16 +476,17 @@ export default defineComponent({
       return latestVersion(versions);
     }
 
-    function toTitleCase(str: string): string {
-      return str.replace(/\b\w/g, c => c.toUpperCase());
+    function sourceLabel(versions: Blueprint[]): string {
+      return sourceFor(latestFor(versions));
     }
 
-    async function checkAdminRole() {
+    function checkAdminRole() {
       try {
-        const grbs  = await vm.$store.dispatch('management/findAll', { type: 'management.cattle.io.globalrolebinding' });
-        const user  = vm.$store.getters['auth/user'];
-        const userId = user?.id;
-        isAdmin.value = !!(userId && grbs.some((grb: any) => grb.userName === userId && grb.globalRoleName === 'admin'));
+        // Use Rancher's canonical admin detection (RBAC capability check) instead of
+        // matching user.id against a GlobalRoleBinding's userName. The latter breaks in
+        // production where user.id is a principal ID (e.g. "u-xxxxx") rather than the
+        // login username, so the global admin was only ever seen as a non-admin.
+        isAdmin.value = isAdminUser(vm.$store.getters);
       } catch (e) {
         console.warn('[SUSE-AI] checkAdminRole failed — admin actions will be hidden:', e);
         isAdmin.value = false;
@@ -505,11 +529,13 @@ export default defineComponent({
     });
 
     return {
-      loading, error, search, sortBy, sortedFamilies, selectedVersions,
+      loading, error, operatorError, retryConnection,
+      search, sortBy, sortedFamilies, selectedVersions,
       showDeprecated, isAdmin,
       deleteModal, deprecateModal,
       latestFor, isDeprecated, isSelectedDeprecated, visibleVersionsFor, versionLabel, componentCount, descriptionFor,
-      toTitleCase, tileActions, onTileAction,
+      sourceLabel,
+      tileActions, onTileAction,
       refresh, navigateCreate, navigateEdit, navigateCopy, navigateInstall,
       confirmDelete, executeDelete, confirmDeprecate, executeDeprecate,
     };
@@ -574,7 +600,15 @@ export default defineComponent({
     gap: 12px;
   }
   .tile-title { margin: 0; font-size: 14px; font-weight: 600; }
-  .tile-meta { font-size: 12px; color: var(--muted); margin-top: 4px; }
+  .tile-meta {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    color: var(--muted);
+    margin-top: 4px;
+  }
+  .tile-meta-sep { opacity: 0.5; }
   .tile-content { flex: 1; }
   .tile-description {
     margin: 0;
@@ -620,7 +654,10 @@ export default defineComponent({
   .modal-buttons { display: flex; gap: 12px; justify-content: flex-end; margin-top: 20px; }
 }
 .mb-10 { margin-bottom: 10px; }
-.mt-5 { margin-top: 5px; }
+.mb-20 { margin-bottom: 20px; }
+.ml-5  { margin-left: 5px; }
+.mt-5  { margin-top: 5px; }
+
 .btn {
   display: inline-flex; align-items: center; gap: 6px;
   padding: 0 14px; height: 32px; border-radius: 6px;

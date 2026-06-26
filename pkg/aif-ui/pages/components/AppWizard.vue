@@ -1,5 +1,6 @@
 <script lang="ts" setup>
 import { defineProps, withDefaults, ref, computed, onMounted, getCurrentInstance, watch } from 'vue';
+import { useT } from '../../composables/useT';
 import yaml from 'js-yaml';
 import { Banner } from '@components/Banner';
 import Loading from '@shell/components/Loading';
@@ -24,7 +25,7 @@ import {
   getInstalledHelmDetails,
   inferClusterRepoForChart,
   listClusterRepos,
-  listNamespaces,
+  fetchUserNamespaces,
 } from '../../services/rancher-apps';
 import { persistLoad, persistSave, persistClear } from '../../services/ui-persist';
 import { validateReleaseName, instanceNameError } from '../../validators/appInstallation';
@@ -64,7 +65,10 @@ const store = vm.$store;
 const router = vm.$router;
 const route = vm.$route;
 
+const t = useT();
+
 const loading = ref(true);
+const loadingNamespaces = ref(false);
 const submitting = ref(false);
 const error = ref<string | null>(null);
 const versions = ref<string[]>([]);
@@ -108,49 +112,12 @@ const versionOptions = computed(() =>
   (versions.value || []).map(v => ({ label: v, value: v }))
 );
 
-// Fetch all namespaces from all clusters and filter out system namespaces
 async function fetchAllNamespaces() {
-  if (!store) {
-    return;
-  }
-
-  try {
-    const clusters = await getClusters(store);
-    console.log('[SUSE-AI] All available clusters:', clusters);
-
-    const allNamespaces = new Set<string>();
-
-    await Promise.all(clusters.map(async (cluster) => {
-      console.log('[SUSE-AI] Trying to get namespaces for cluster:', cluster);
-      try {
-        const namespaces = await listNamespaces(store, cluster.id);
-        namespaces.forEach(ns => allNamespaces.add(ns));
-      } catch (e) {
-        console.warn(`[SUSE-AI] Failed to fetch namespaces for cluster ${cluster.id}:`, e);
-      }
-    }));
-
-    console.log('[SUSE-AI] Found all unique namespaces:', allNamespaces);
-
-    const systemPrefixes = ['c-', 'p-', 'kube-', 'cattle-', 'rancher', 'longhorn-', 'fleet-', 'cluster-fleet-', 'system-', 'istio-', 'neuvector', 'ingress-', 'cert-manager'];
-    const userNamespaces = Array.from(allNamespaces).filter(name => 
-        !systemPrefixes.some(prefix => name.startsWith(prefix))
-    );
-
-    const desiredDefault = `${props.slug}-system`;
-    if (!userNamespaces.includes(desiredDefault)) {
-      userNamespaces.push(desiredDefault);
-    }
-
-    const sortedNamespaces = userNamespaces.sort();
-    namespaceOptions.value = sortedNamespaces.map(ns => ({ label: ns, value: ns }));
-    
-    if (isInstallMode.value) {
-      form.value.namespace = desiredDefault;
-    }
-
-  } catch (e) {
-    console.warn(`[SUSE-AI] Failed to fetch all namespaces:`, e);
+  if (!store) return;
+  const desiredDefault = `${props.slug}-system`;
+  namespaceOptions.value = await fetchUserNamespaces(store, desiredDefault);
+  if (isInstallMode.value) {
+    form.value.namespace = desiredDefault;
   }
 }
 
@@ -158,25 +125,25 @@ async function fetchAllNamespaces() {
 const wizardSteps = computed(() => [
   {
     name: 'basic-info',
-    label: 'Basic Information',
+    label: t('suseai.wizard.steps.basicInfo', 'Basic Information'),
     ready: releaseNameValid.value,
     weight: 1
   },
   {
     name: 'target',
-    label: 'Target Cluster',
+    label: t('suseai.wizard.steps.targetCluster', 'Target Cluster'),
     ready: !!form.value.chartRepo && !!form.value.chartVersion && !loadingVersions.value,
     weight: 2
   },
   {
     name: 'values',
-    label: 'Configuration',
+    label: t('suseai.wizard.steps.configuration', 'Configuration'),
     ready: form.value.clusters.length > 0 && !loadingValues.value,
     weight: 3
   },
   {
     name: 'review',
-    label: 'Review',
+    label: t('suseai.wizard.steps.review', 'Review'),
     ready: form.value.clusters.length > 0,
     weight: 4
   }
@@ -307,10 +274,12 @@ const basicInfoForm = computed({
 onMounted(async () => {
   try {
     await initializeWizard();
+    loadingNamespaces.value = true;
     await fetchAllNamespaces();
   } catch (e) {
     error.value = `Failed to initialize: ${e.message || 'Unknown error'}`;
   } finally {
+    loadingNamespaces.value = false;
     loading.value = false;
   }
 });
@@ -1582,6 +1551,7 @@ function previousStep() {
             :version-options="versionOptions"
             :loading-versions="loadingVersions"
             :namespace-options="namespaceOptions"
+            :loading-namespaces="loadingNamespaces"
             :release-disabled="isManageMode"
             :namespace-disabled="isManageMode"
           />
@@ -1592,8 +1562,6 @@ function previousStep() {
             :mode="props.mode"
             v-model:clusters="form.clusters"
             v-model:deployType="form.deployType"
-            :app-slug="props.slug"
-            :app-name="(route.query.n as string) || props.slug"
             :helm-oversized="helmOversized"
           />
 
