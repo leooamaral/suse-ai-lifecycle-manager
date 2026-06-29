@@ -8,6 +8,7 @@ export default [
     redirect: { name: `c-cluster-${PRODUCT}-${PAGE_TYPES.OVERVIEW}`, params: { product: PRODUCT } },
     meta:     { product: PRODUCT }
   },
+  
 
   // Overview page
   {
