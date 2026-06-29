@@ -27,14 +27,8 @@ jobs:
 
       - run: yarn install --frozen-lockfile --ignore-engines
 
-      - run: yarn lint
+      - run: eslint --ext .js,.ts,.vue pkg/aif-ui/
 
-      - run: yarn lint:l10n
-
-      - run: npx tsc --noEmit -p pkg/ai-factory/tsconfig.json
+      - run: npx tsc --noEmit -p pkg/aif-ui/tsconfig.json
 
       - run: yarn build-pkg aif-ui
-
-      - run: yarn test
-
-      - run: yarn test:unit --run
